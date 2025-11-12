@@ -1,0 +1,929 @@
+---
+description: Kubernetes security best practices and hardening guidelines
+globs: **/*.yaml **/*.yml **/k8s/**/* **/kubernetes/**/* **/manifests/**/*
+alwaysApply: false
+---
+
+# Kubernetes Security Best Practices
+
+This document outlines security best practices for Kubernetes clusters, workloads, and configurations. Follow these guidelines to ensure your Kubernetes deployments are secure, compliant, and production-ready.
+
+## Table of Contents
+
+- [Cluster Security](#cluster-security)
+- [Pod Security](#pod-security)
+- [Network Security](#network-security)
+- [Secret Management](#secret-management)
+- [RBAC and Access Control](#rbac-and-access-control)
+- [Container Security](#container-security)
+- [Image Security](#image-security)
+- [Runtime Security](#runtime-security)
+- [Audit Logging](#audit-logging)
+- [Compliance and Governance](#compliance-and-governance)
+- [Security Contexts](#security-contexts)
+- [Service Accounts](#service-accounts)
+- [Network Policies](#network-policies)
+- [Pod Security Standards](#pod-security-standards)
+- [Quick Reference Checklist](#quick-reference-checklist)
+
+---
+
+## Cluster Security
+
+### API Server Security
+
+- **Enable RBAC**: Always enable Role-Based Access Control (RBAC).
+- **Use TLS**: Ensure all API server communications use TLS.
+- **Restrict API access**: Use network policies and firewall rules to restrict API server access.
+- **Enable audit logging**: Configure comprehensive audit logging.
+
+```yaml
+# Good - API server configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-apiserver-config
+data:
+  # Enable RBAC
+  authorization-mode: "Node,RBAC"
+  # Enable audit logging
+  audit-log-path: "/var/log/audit.log"
+  audit-log-maxage: "30"
+  audit-log-maxbackup: "10"
+  audit-log-maxsize: "100"
+```
+
+### etcd Security
+
+- **Encrypt etcd data**: Enable encryption at rest for etcd.
+- **Use TLS for etcd**: Ensure etcd communication uses TLS.
+- **Restrict etcd access**: Limit network access to etcd nodes.
+- **Regular backups**: Implement regular etcd backups.
+
+### Control Plane Security
+
+- **Isolate control plane**: Run control plane components on dedicated nodes.
+- **Use dedicated service accounts**: Each component should have its own service account.
+- **Regular updates**: Keep control plane components updated.
+- **Minimal permissions**: Follow principle of least privilege.
+
+---
+
+## Pod Security
+
+### Security Contexts
+
+Always define security contexts for pods and containers:
+
+```yaml
+# Good - Comprehensive security context
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secure-pod
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 2000
+    seccompProfile:
+      type: RuntimeDefault
+    supplementalGroups: [1000]
+  containers:
+  - name: app
+    image: nginx:1.21.0
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+        add:
+        - NET_BIND_SERVICE
+      runAsNonRoot: true
+      runAsUser: 1000
+```
+
+### Security Context Best Practices
+
+- **Run as non-root**: Always set `runAsNonRoot: true`.
+- **Drop all capabilities**: Drop all capabilities and add only what's needed.
+- **Read-only root filesystem**: Use `readOnlyRootFilesystem: true` when possible.
+- **Disable privilege escalation**: Set `allowPrivilegeEscalation: false`.
+- **Use specific user IDs**: Avoid running as UID 0 (root).
+
+```yaml
+# Good
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+
+# Bad - Running as root
+securityContext:
+  runAsUser: 0  # Root user - security risk
+```
+
+### Pod Security Standards
+
+Use Pod Security Standards (PSS) to enforce security policies:
+
+```yaml
+# Namespace with restricted Pod Security Standard
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+```
+
+**Pod Security Levels:**
+- **Privileged**: Unrestricted (not recommended for production)
+- **Baseline**: Minimally restrictive (prevents known privilege escalations)
+- **Restricted**: Highly restrictive (follows current Pod hardening best practices)
+
+---
+
+## Network Security
+
+### Network Policies
+
+Implement Network Policies to control pod-to-pod communication:
+
+```yaml
+# Good - Restrictive network policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-network-policy
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: myapp
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    - namespaceSelector:
+        matchLabels:
+          name: allowed-namespace
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: database
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+```
+
+### Network Policy Best Practices
+
+- **Default deny**: Start with deny-all and allow specific traffic.
+- **Namespace isolation**: Use namespace selectors to isolate namespaces.
+- **Least privilege**: Only allow necessary network connections.
+- **DNS access**: Always allow DNS (UDP/TCP port 53) for egress.
+
+```yaml
+# Good - Default deny with explicit allows
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+```
+
+### Service Mesh Security
+
+- **Use mTLS**: Enable mutual TLS in service mesh (Istio, Linkerd).
+- **Traffic encryption**: Encrypt all service-to-service traffic.
+- **Access policies**: Implement fine-grained access policies.
+
+---
+
+## Secret Management
+
+### Kubernetes Secrets
+
+- **Encrypt at rest**: Enable encryption at rest for etcd.
+- **Use external secret management**: Consider external secret managers (Vault, AWS Secrets Manager).
+- **Rotate secrets regularly**: Implement secret rotation policies.
+- **Limit secret access**: Use RBAC to restrict secret access.
+
+```yaml
+# Good - Secret with proper metadata
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+  namespace: production
+type: Opaque
+stringData:
+  password: "secure-password"
+---
+# Good - RBAC to restrict secret access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: secret-reader
+  namespace: production
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["app-secret"]
+  verbs: ["get", "list"]
+```
+
+### Secret Best Practices
+
+- **Never commit secrets**: Use `.gitignore` for secret files.
+- **Use base64 encoding**: Encode secret values properly.
+- **Mount as files**: Mount secrets as files, not environment variables.
+- **Use secret rotation**: Implement automated secret rotation.
+
+```yaml
+# Good - Mount secret as file
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: app
+    volumeMounts:
+    - name: secret-volume
+      mountPath: /etc/secrets
+      readOnly: true
+  volumes:
+  - name: secret-volume
+    secret:
+      secretName: app-secret
+
+# Bad - Secret as environment variable (visible in process list)
+env:
+- name: PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: app-secret
+      key: password
+```
+
+### External Secret Management
+
+- **HashiCorp Vault**: Use Vault for centralized secret management.
+- **Cloud provider secrets**: Use AWS Secrets Manager, Azure Key Vault, GCP Secret Manager.
+- **Sealed Secrets**: Use Sealed Secrets for GitOps workflows.
+
+---
+
+## RBAC and Access Control
+
+### Role-Based Access Control
+
+Implement least-privilege RBAC policies:
+
+```yaml
+# Good - Minimal permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: production
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-reader-binding
+  namespace: production
+subjects:
+- kind: User
+  name: developer
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+```
+
+### RBAC Best Practices
+
+- **Principle of least privilege**: Grant minimum necessary permissions.
+- **Namespace isolation**: Use namespaces to isolate resources.
+- **Regular audits**: Regularly audit RBAC permissions.
+- **Avoid cluster-admin**: Never use `cluster-admin` unless absolutely necessary.
+- **Use groups**: Bind roles to groups, not individual users.
+
+```yaml
+# Good - Namespace-scoped role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: production
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+
+# Bad - Cluster-wide admin access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-binding
+subjects:
+- kind: User
+  name: developer
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin  # Too permissive
+```
+
+### Service Account Permissions
+
+- **Minimal service accounts**: Create dedicated service accounts with minimal permissions.
+- **Disable automount**: Disable automatic mounting of default service account tokens.
+- **Token management**: Use projected service account tokens.
+
+```yaml
+# Good - Service account with minimal permissions
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-sa
+  namespace: production
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: app-sa
+  automountServiceAccountToken: false
+```
+
+---
+
+## Container Security
+
+### Container Image Security
+
+- **Use minimal base images**: Prefer distroless or Alpine images.
+- **Scan images**: Scan images for vulnerabilities before deployment.
+- **Sign images**: Use image signing and verification.
+- **Avoid latest tag**: Use specific version tags.
+
+```yaml
+# Good - Specific version, minimal image
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        image: nginx:1.21.0  # Specific version
+        imagePullPolicy: IfNotPresent
+
+# Bad - Latest tag, large image
+image: nginx:latest  # Avoid latest
+image: ubuntu:20.04  # Too large, use distroless
+```
+
+### Container Runtime Security
+
+- **Use gVisor or Kata**: Consider using gVisor or Kata containers for additional isolation.
+- **Enable seccomp**: Use seccomp profiles to restrict system calls.
+- **Use AppArmor/SELinux**: Enable AppArmor or SELinux profiles.
+
+```yaml
+# Good - seccomp profile
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    seccomp.security.alpha.kubernetes.io/pod: "runtime/default"
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+```
+
+### Resource Limits
+
+Always set resource requests and limits:
+
+```yaml
+# Good - Resource limits prevent resource exhaustion
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: app
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+```
+
+---
+
+## Image Security
+
+### Image Scanning
+
+- **Pre-deployment scanning**: Scan images before deployment.
+- **Continuous scanning**: Implement continuous image scanning.
+- **Vulnerability management**: Track and remediate vulnerabilities.
+- **Use trusted registries**: Only pull images from trusted registries.
+
+### Image Policies
+
+- **Admission controllers**: Use OPA Gatekeeper or Kyverno for image policies.
+- **Block vulnerable images**: Reject images with critical vulnerabilities.
+- **Require signed images**: Enforce image signing.
+
+```yaml
+# Example - Kyverno policy to block vulnerable images
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-image-scan
+spec:
+  validationFailureAction: enforce
+  rules:
+  - name: check-image-vulnerabilities
+    match:
+      resources:
+        kinds:
+        - Pod
+    validate:
+      message: "Image must pass vulnerability scan"
+      pattern:
+        spec:
+          containers:
+          - name: "*"
+            image: "!*:latest"
+```
+
+### Image Pull Secrets
+
+- **Use pull secrets**: Use image pull secrets for private registries.
+- **Rotate secrets**: Regularly rotate image pull secrets.
+
+```yaml
+# Good - Image pull secret
+apiVersion: v1
+kind: Secret
+type: kubernetes.io/dockerconfigjson
+metadata:
+  name: registry-secret
+data:
+  .dockerconfigjson: <base64-encoded-docker-config>
+---
+apiVersion: v1
+kind: Pod
+spec:
+  imagePullSecrets:
+  - name: registry-secret
+  containers:
+  - name: app
+    image: private-registry/app:1.0.0
+```
+
+---
+
+## Runtime Security
+
+### Runtime Protection
+
+- **Falco**: Use Falco for runtime threat detection.
+- **eBPF monitoring**: Monitor system calls and network activity.
+- **Anomaly detection**: Implement anomaly detection for suspicious behavior.
+
+### Admission Controllers
+
+- **Pod Security Standards**: Enforce Pod Security Standards.
+- **OPA Gatekeeper**: Use OPA Gatekeeper for policy enforcement.
+- **Kyverno**: Use Kyverno for Kubernetes-native policies.
+
+```yaml
+# Example - Gatekeeper policy
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredsecuritycontext
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredSecurityContext
+      validation:
+        openAPIV3Schema:
+          properties:
+            runAsNonRoot:
+              type: boolean
+```
+
+---
+
+## Audit Logging
+
+### Enable Audit Logging
+
+- **API server audit**: Enable API server audit logging.
+- **Log retention**: Configure appropriate log retention.
+- **Centralized logging**: Send logs to centralized logging system.
+- **Monitor access**: Monitor and alert on suspicious access patterns.
+
+```yaml
+# API server audit configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audit-policy
+data:
+  policy.yaml: |
+    apiVersion: audit.k8s.io/v1
+    kind: Policy
+    rules:
+    - level: Metadata
+      omitStages:
+      - RequestReceived
+    - level: RequestResponse
+      resources:
+      - group: ""
+        resources: ["secrets", "configmaps"]
+    - level: Request
+      resources:
+      - group: ""
+        resources: ["pods"]
+        verbs: ["create", "update", "patch", "delete"]
+```
+
+### Audit Best Practices
+
+- **Log all API requests**: Log all API server requests.
+- **Sensitive resource logging**: Log access to secrets and configmaps.
+- **Alert on anomalies**: Set up alerts for suspicious activities.
+- **Compliance**: Ensure audit logs meet compliance requirements.
+
+---
+
+## Compliance and Governance
+
+### Security Policies
+
+- **Pod Security Standards**: Enforce Pod Security Standards cluster-wide.
+- **Network policies**: Implement network policies for all namespaces.
+- **Resource quotas**: Use resource quotas to prevent resource exhaustion.
+- **Limit ranges**: Use limit ranges to enforce resource limits.
+
+```yaml
+# Good - Resource quota and limit range
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: compute-quota
+  namespace: production
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mem-limit-range
+  namespace: production
+spec:
+  limits:
+  - default:
+      memory: "512Mi"
+      cpu: "500m"
+    defaultRequest:
+      memory: "256Mi"
+      cpu: "250m"
+    type: Container
+```
+
+### Compliance Frameworks
+
+- **CIS Kubernetes Benchmark**: Follow CIS Kubernetes Benchmark.
+- **NIST**: Align with NIST cybersecurity framework.
+- **SOC 2**: Implement controls for SOC 2 compliance.
+- **PCI DSS**: Follow PCI DSS requirements if handling payment data.
+
+---
+
+## Security Contexts
+
+### Pod Security Context
+
+Always define pod-level security context:
+
+```yaml
+apiVersion: v1
+kind: Pod
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 2000
+    seccompProfile:
+      type: RuntimeDefault
+    supplementalGroups: [1000]
+```
+
+### Container Security Context
+
+Define container-level security context:
+
+```yaml
+spec:
+  containers:
+  - name: app
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+        add:
+        - NET_BIND_SERVICE
+      runAsNonRoot: true
+      runAsUser: 1000
+```
+
+---
+
+## Service Accounts
+
+### Service Account Best Practices
+
+- **Dedicated service accounts**: Create dedicated service accounts for each application.
+- **Disable automount**: Disable automatic token mounting when not needed.
+- **Minimal permissions**: Grant minimal RBAC permissions.
+- **Token expiration**: Use projected service account tokens with expiration.
+
+```yaml
+# Good - Dedicated service account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-sa
+  namespace: production
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: app-sa
+  automountServiceAccountToken: false
+```
+
+---
+
+## Network Policies
+
+### Network Policy Implementation
+
+- **Default deny**: Start with deny-all policies.
+- **Namespace isolation**: Isolate namespaces with network policies.
+- **Egress control**: Control egress traffic to external services.
+- **Ingress control**: Restrict ingress traffic to necessary sources.
+
+```yaml
+# Good - Comprehensive network policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: myapp
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: database
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+```
+
+---
+
+## Pod Security Standards
+
+### Enforcing Pod Security Standards
+
+Apply Pod Security Standards at namespace level:
+
+```yaml
+# Restricted Pod Security Standard
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+```
+
+### Pod Security Standard Levels
+
+- **Privileged**: Unrestricted (not recommended)
+- **Baseline**: Minimally restrictive
+- **Restricted**: Highly restrictive (recommended for production)
+
+---
+
+## Quick Reference Checklist
+
+### Cluster Security
+- [ ] RBAC enabled and properly configured
+- [ ] API server uses TLS
+- [ ] etcd encryption at rest enabled
+- [ ] Audit logging enabled
+- [ ] Control plane isolated
+- [ ] Regular security updates applied
+
+### Pod Security
+- [ ] Security contexts defined for all pods
+- [ ] Run as non-root user
+- [ ] Privilege escalation disabled
+- [ ] All capabilities dropped (except required)
+- [ ] Read-only root filesystem where possible
+- [ ] Pod Security Standards enforced
+
+### Network Security
+- [ ] Network policies implemented
+- [ ] Default deny policies in place
+- [ ] Namespace isolation configured
+- [ ] Service mesh with mTLS (if applicable)
+- [ ] Ingress/egress traffic controlled
+
+### Secret Management
+- [ ] Secrets encrypted at rest
+- [ ] External secret management (if applicable)
+- [ ] Secret rotation implemented
+- [ ] RBAC restricts secret access
+- [ ] Secrets mounted as files (not env vars)
+
+### RBAC
+- [ ] Principle of least privilege applied
+- [ ] Namespace-scoped roles preferred
+- [ ] Regular RBAC audits performed
+- [ ] Service accounts with minimal permissions
+- [ ] No cluster-admin bindings (unless necessary)
+
+### Container Security
+- [ ] Minimal base images used
+- [ ] Images scanned for vulnerabilities
+- [ ] Specific image tags (not latest)
+- [ ] Resource limits defined
+- [ ] Image pull secrets configured
+
+### Runtime Security
+- [ ] Runtime threat detection (Falco, etc.)
+- [ ] Admission controllers configured
+- [ ] Policy enforcement (OPA/Kyverno)
+- [ ] Anomaly detection enabled
+
+### Compliance
+- [ ] CIS Kubernetes Benchmark followed
+- [ ] Audit logs meet compliance requirements
+- [ ] Resource quotas and limit ranges configured
+- [ ] Security policies documented
+
+---
+
+## Security Tools and Resources
+
+### Recommended Tools
+
+- **Falco**: Runtime security monitoring
+- **OPA Gatekeeper**: Policy enforcement
+- **Kyverno**: Kubernetes-native policies
+- **Trivy**: Container image scanning
+- **kube-bench**: CIS benchmark compliance checking
+- **kube-hunter**: Security assessment
+- **Polaris**: Kubernetes best practices validation
+
+### Security Resources
+
+- [Kubernetes Security Documentation](https://kubernetes.io/docs/concepts/security/)
+- [CIS Kubernetes Benchmark](https://www.cisecurity.org/benchmark/kubernetes)
+- [CNCF Security Whitepaper](https://github.com/cncf/tag-security)
+- [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+
+---
+
+## Common Security Anti-Patterns to Avoid
+
+```yaml
+# ❌ BAD - Running as root
+securityContext:
+  runAsUser: 0
+
+# ❌ BAD - Privilege escalation allowed
+securityContext:
+  allowPrivilegeEscalation: true
+
+# ❌ BAD - All capabilities
+securityContext:
+  capabilities: {}
+
+# ❌ BAD - Latest image tag
+image: nginx:latest
+
+# ❌ BAD - Secret as environment variable
+env:
+- name: PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: secret
+      key: password
+
+# ❌ BAD - No resource limits
+resources: {}
+
+# ❌ BAD - Cluster-admin binding
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+
+# ✅ GOOD - Secure configuration
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+image: nginx:1.21.0
+resources:
+  limits:
+    memory: "256Mi"
+    cpu: "200m"
+```
+
+---
+
+## References
+
+- [Kubernetes Security Documentation](https://kubernetes.io/docs/concepts/security/)
+- [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+- [CIS Kubernetes Benchmark](https://www.cisecurity.org/benchmark/kubernetes)
+- [CNCF Security Whitepaper](https://github.com/cncf/tag-security)
+- [Kubernetes Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
+- [RBAC Authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)

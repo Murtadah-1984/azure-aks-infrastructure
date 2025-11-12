@@ -1,0 +1,119 @@
+name: Security Scan
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    branches:
+      - main
+      - develop
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  secret-scanning:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3
+      
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          config-path: .gitleaks.toml
+          no-git: false
+          verbose: true
+          redact: true
+        continue-on-error: true
+      
+      - name: Check for hardcoded secrets
+        run: |
+          echo "::group::Scanning for potential secrets"
+          # Check for common secret patterns
+          if grep -r -iE "(password|secret|key|token)\s*[:=]\s*['\"][^'\"]{8,}" \
+            --include="*.tf" \
+            --include="*.yaml" \
+            --include="*.yml" \
+            --include="*.sh" \
+            --exclude-dir=".git" \
+            --exclude-dir=".github" \
+            terraform/ helm-charts/ scripts/ argocd/ 2>/dev/null | \
+            grep -v "variable\|var\." | \
+            grep -v "#.*password\|#.*secret" | \
+            grep -v "example\|sample\|placeholder"; then
+            echo "::error::Potential hardcoded secrets found"
+            echo "Please use secrets management instead of hardcoding values"
+            exit 1
+          fi
+          echo "::endgroup::"
+        continue-on-error: true
+  
+  dependency-scanning:
+    name: Dependency Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+        continue-on-error: true
+      
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+  
+  terraform-security:
+    name: Terraform Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3
+      
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/
+          framework: terraform
+          soft_fail: true
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+        continue-on-error: true
+      
+      - name: Upload Checkov results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+        continue-on-error: true
+      
+      - name: Run TFSec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          soft_fail: true
+        continue-on-error: true
+

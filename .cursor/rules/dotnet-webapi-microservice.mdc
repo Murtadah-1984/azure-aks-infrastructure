@@ -1,0 +1,919 @@
+---
+description: Enterprise-grade .NET WebAPI microservice development standards following Clean Architecture, SOLID principles, and stateless design for Kubernetes deployment
+globs: **/*.cs
+alwaysApply: true
+---
+# .NET WebAPI Microservice Development Standards
+
+Enterprise-grade blueprint for standardized .NET Web API microservices following **Clean Architecture**, **SOLID principles**, and **stateless microservice design** for Kubernetes deployment.
+
+## Project Structure & Clean Architecture
+
+### Standard Directory Structure
+
+```
+YourMicroservice/
+├── src/
+│   ├── YourMicroservice.Domain/           # Enterprise business logic
+│   │   ├── Entities/
+│   │   ├── ValueObjects/
+│   │   ├── DomainEvents/
+│   │   ├── Exceptions/
+│   │   └── Interfaces/
+│   │
+│   ├── YourMicroservice.Application/       # Use cases & orchestration
+│   │   ├── Common/
+│   │   │   ├── Interfaces/
+│   │   │   ├── Behaviors/
+│   │   │   ├── Models/
+│   │   │   └── Exceptions/
+│   │   ├── Features/                      # Vertical slice per feature
+│   │   │   └── Orders/
+│   │   │       ├── Commands/
+│   │   │       ├── Queries/
+│   │   │       ├── DTOs/
+│   │   │       └── Validators/
+│   │   └── DependencyInjection.cs
+│   │
+│   ├── YourMicroservice.Infrastructure/    # External concerns
+│   │   ├── Persistence/
+│   │   │   ├── Configurations/
+│   │   │   ├── Repositories/
+│   │   │   └── ApplicationDbContext.cs
+│   │   ├── Identity/
+│   │   ├── Services/
+│   │   ├── MessageBrokers/
+│   │   └── DependencyInjection.cs
+│   │
+│   └── YourMicroservice.API/              # Presentation
+│       ├── Controllers/
+│       ├── Filters/
+│       ├── Middleware/
+│       ├── Extensions/
+│       └── Program.cs
+│
+├── tests/
+│   ├── YourMicroservice.Domain.UnitTests/
+│   ├── YourMicroservice.Application.UnitTests/
+│   ├── YourMicroservice.Infrastructure.IntegrationTests/
+│   └── YourMicroservice.API.FunctionalTests/
+│
+└── shared/ (Cross-cutting NuGet packages)
+    ├── SharedKernel/
+    ├── BuildingBlocks.EventBus/
+    ├── BuildingBlocks.HealthChecks/
+    └── BuildingBlocks.Observability/
+```
+
+**Dependency Rule:** Outer layers may depend inward; inner layers must not depend outward.
+
+## 1. Stateless Implementation - Non-Negotiables
+
+### 1.1 Never Store State in API Layer
+
+```csharp
+// ❌ WRONG - Stateful
+public class OrdersController : ControllerBase
+{
+    private List<Order> _orders = new(); // State stored in controller
+    
+    [HttpPost]
+    public IActionResult Create(CreateOrderDto dto)
+    {
+        _orders.Add(new Order(dto));
+        return Ok();
+    }
+}
+
+// ✅ CORRECT - Stateless
+public class OrdersController : ControllerBase
+{
+    private readonly IMediator _mediator;
+    
+    public OrdersController(IMediator mediator)
+    {
+        _mediator = mediator;
+    }
+    
+    [HttpPost]
+    public async Task<IActionResult> Create(
+        CreateOrderCommand command, 
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(command, cancellationToken);
+        return Ok(result);
+    }
+}
+```
+
+### 1.2 Externalize All State
+
+- **Configuration:** Use `appsettings.json` and environment variables
+- **Cache:** Distributed cache (Redis) only, never in-memory
+- **Session:** JWT Bearer Tokens or OAuth2, no server-side sessions
+- **User Context:** Extract from JWT claims, not server state
+
+```csharp
+// ✅ CORRECT - User context from token
+public interface ICurrentUserService
+{
+    string? UserId { get; }
+    string? UserName { get; }
+    string? TenantId { get; }
+    bool IsAuthenticated { get; }
+}
+
+public class CurrentUserService : ICurrentUserService
+{
+    private readonly IHttpContextAccessor _httpContextAccessor;
+    
+    public CurrentUserService(IHttpContextAccessor httpContextAccessor)
+    {
+        _httpContextAccessor = httpContextAccessor;
+    }
+    
+    public string? UserId => 
+        _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+    
+    public string? TenantId => 
+        _httpContextAccessor.HttpContext?.User?.FindFirstValue("tenant_id");
+    
+    public bool IsAuthenticated => 
+        _httpContextAccessor.HttpContext?.User?.Identity?.IsAuthenticated ?? false;
+}
+```
+
+### 1.3 Kubernetes-Ready Requirements
+
+- Implement `/health`, `/health/ready`, `/health/live` endpoints
+- Use environment variables for configuration (12-Factor App)
+- Structured logging (Serilog, OpenTelemetry)
+- Async I/O throughout
+- Idempotent operations
+- Retry policies (Polly)
+- No static mutations or shared globals
+
+## 2. SOLID Principles Implementation
+
+### 2.1 Single Responsibility - MediatR Pattern
+
+Each handler has ONE responsibility:
+
+```csharp
+// ✅ CORRECT - Single responsibility
+public record CreateOrderCommand(
+    Guid CustomerId,
+    List<OrderItemDto> Items
+) : IRequest<Result<Guid>>;
+
+public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, Result<Guid>>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly IEventBus _eventBus;
+    
+    public async Task<Result<Guid>> Handle(CreateOrderCommand request, CancellationToken cancellationToken)
+    {
+        // Single responsibility: Create order
+        var order = Order.Create(request.CustomerId);
+        
+        foreach (var item in request.Items)
+        {
+            order.AddItem(item.ProductId, item.Quantity, item.Price);
+        }
+        
+        await _context.Orders.AddAsync(order, cancellationToken);
+        await _context.SaveChangesAsync(cancellationToken);
+        
+        await _eventBus.PublishAsync(new OrderCreatedEvent(order.Id), cancellationToken);
+        
+        return Result<Guid>.Success(order.Id);
+    }
+}
+```
+
+### 2.2 Open/Closed - Pipeline Behaviors
+
+Extend functionality without modifying existing code:
+
+```csharp
+// ✅ CORRECT - Extensible pipeline
+public class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : IRequest<TResponse>
+{
+    private readonly IEnumerable<IValidator<TRequest>> _validators;
+    
+    public async Task<TResponse> Handle(
+        TRequest request,
+        RequestHandlerDelegate<TResponse> next,
+        CancellationToken cancellationToken)
+    {
+        if (!_validators.Any()) 
+            return await next();
+        
+        var context = new ValidationContext<TRequest>(request);
+        var validationResults = await Task.WhenAll(
+            _validators.Select(v => v.ValidateAsync(context, cancellationToken)));
+        
+        var failures = validationResults
+            .SelectMany(r => r.Errors)
+            .Where(f => f != null)
+            .ToList();
+        
+        if (failures.Count != 0)
+            throw new ValidationException(failures);
+        
+        return await next();
+    }
+}
+
+// Registration - easily add new behaviors
+services.AddMediatR(cfg =>
+{
+    cfg.RegisterServicesFromAssembly(Assembly.GetExecutingAssembly());
+    cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
+    cfg.AddOpenBehavior(typeof(LoggingBehavior<,>));
+    cfg.AddOpenBehavior(typeof(TransactionBehavior<,>));
+});
+```
+
+### 2.3 Liskov Substitution - Interface Contracts
+
+```csharp
+// ✅ CORRECT - Substitutable implementations
+public interface IRepository<T> where T : Entity
+{
+    Task<T?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<List<T>> GetAllAsync(CancellationToken cancellationToken = default);
+    Task AddAsync(T entity, CancellationToken cancellationToken = default);
+}
+
+// Can be replaced with different implementations without breaking application layer
+public class EfRepository<T> : IRepository<T> where T : Entity { }
+public class DapperRepository<T> : IRepository<T> where T : Entity { }
+```
+
+### 2.4 Interface Segregation
+
+```csharp
+// ❌ WRONG - Fat interface
+public interface IOrderService
+{
+    Task CreateOrder(CreateOrderDto dto);
+    Task UpdateOrder(UpdateOrderDto dto);
+    Task DeleteOrder(Guid id);
+    Task<OrderDto> GetOrder(Guid id);
+    Task ApproveOrder(Guid id);
+    Task RejectOrder(Guid id);
+    Task ShipOrder(Guid id);
+    Task GenerateInvoice(Guid id);
+}
+
+// ✅ CORRECT - Segregated interfaces
+public interface IOrderCommandService
+{
+    Task<Result<Guid>> CreateOrderAsync(CreateOrderCommand command, CancellationToken cancellationToken);
+    Task<Result> UpdateOrderAsync(UpdateOrderCommand command, CancellationToken cancellationToken);
+}
+
+public interface IOrderQueryService
+{
+    Task<Result<OrderDto>> GetOrderAsync(Guid id, CancellationToken cancellationToken);
+    Task<Result<List<OrderDto>>> GetOrdersAsync(OrderQueryParameters parameters, CancellationToken cancellationToken);
+}
+
+public interface IOrderWorkflowService
+{
+    Task<Result> ApproveOrderAsync(Guid orderId, CancellationToken cancellationToken);
+    Task<Result> RejectOrderAsync(Guid orderId, string reason, CancellationToken cancellationToken);
+}
+```
+
+### 2.5 Dependency Inversion
+
+```csharp
+// ✅ CORRECT - Application layer defines interfaces
+namespace YourMicroservice.Application.Common.Interfaces
+{
+    public interface IEmailService
+    {
+        Task SendAsync(EmailMessage message, CancellationToken cancellationToken = default);
+    }
+    
+    public interface IApplicationDbContext
+    {
+        DbSet<Order> Orders { get; }
+        Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+    }
+}
+
+// Infrastructure implements abstractions
+namespace YourMicroservice.Infrastructure.Services
+{
+    public class SendGridEmailService : IEmailService
+    {
+        // Implementation details
+    }
+}
+```
+
+## 3. Standardized Shared Infrastructure (BuildingBlocks)
+
+### 3.1 BuildingBlocks.Domain Package
+
+```csharp
+// ✅ CORRECT - Base entity with domain events
+public abstract class Entity
+{
+    public Guid Id { get; protected set; }
+    public DateTime CreatedAt { get; protected set; }
+    public string? CreatedBy { get; protected set; }
+    public DateTime? LastModifiedAt { get; protected set; }
+    public string? LastModifiedBy { get; protected set; }
+    
+    private readonly List<IDomainEvent> _domainEvents = new();
+    public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents.AsReadOnly();
+    
+    protected void AddDomainEvent(IDomainEvent domainEvent)
+    {
+        _domainEvents.Add(domainEvent);
+    }
+    
+    public void ClearDomainEvents()
+    {
+        _domainEvents.Clear();
+    }
+}
+
+public abstract class AggregateRoot : Entity
+{
+    // Aggregate-specific logic
+}
+
+public interface IDomainEvent
+{
+    Guid Id { get; }
+    DateTime OccurredOn { get; }
+}
+```
+
+### 3.2 BuildingBlocks.Application Package
+
+```csharp
+// ✅ CORRECT - Result pattern for standardized responses
+public class Result
+{
+    public bool IsSuccess { get; }
+    public bool IsFailure => !IsSuccess;
+    public string Error { get; }
+    
+    protected Result(bool isSuccess, string error)
+    {
+        if (isSuccess && error != string.Empty)
+            throw new InvalidOperationException();
+        if (!isSuccess && error == string.Empty)
+            throw new InvalidOperationException();
+        
+        IsSuccess = isSuccess;
+        Error = error;
+    }
+    
+    public static Result Success() => new(true, string.Empty);
+    public static Result Failure(string error) => new(false, error);
+    public static Result<T> Success<T>(T value) => new(value, true, string.Empty);
+    public static Result<T> Failure<T>(string error) => new(default, false, error);
+}
+
+public class Result<T> : Result
+{
+    public T Value { get; }
+    
+    protected internal Result(T value, bool isSuccess, string error)
+        : base(isSuccess, error)
+    {
+        Value = value;
+    }
+}
+```
+
+### 3.3 BuildingBlocks.Infrastructure Package
+
+```csharp
+// ✅ CORRECT - Base DB Context with audit and domain events
+public abstract class BaseDbContext : DbContext
+{
+    private readonly ICurrentUserService _currentUserService;
+    private readonly IMediator _mediator;
+    
+    protected BaseDbContext(
+        DbContextOptions options,
+        ICurrentUserService currentUserService,
+        IMediator mediator) : base(options)
+    {
+        _currentUserService = currentUserService;
+        _mediator = mediator;
+    }
+    
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        // Audit trail
+        foreach (var entry in ChangeTracker.Entries<Entity>())
+        {
+            switch (entry.State)
+            {
+                case EntityState.Added:
+                    entry.Entity.CreatedAt = DateTime.UtcNow;
+                    entry.Entity.CreatedBy = _currentUserService.UserId;
+                    break;
+                case EntityState.Modified:
+                    entry.Entity.LastModifiedAt = DateTime.UtcNow;
+                    entry.Entity.LastModifiedBy = _currentUserService.UserId;
+                    break;
+            }
+        }
+        
+        // Domain events dispatch
+        var events = ChangeTracker.Entries<Entity>()
+            .Select(x => x.Entity)
+            .SelectMany(x =>
+            {
+                var domainEvents = x.DomainEvents;
+                x.ClearDomainEvents();
+                return domainEvents;
+            })
+            .ToList();
+        
+        var result = await base.SaveChangesAsync(cancellationToken);
+        
+        foreach (var domainEvent in events)
+        {
+            await _mediator.Publish(domainEvent, cancellationToken);
+        }
+        
+        return result;
+    }
+}
+```
+
+### 3.4 BuildingBlocks.API Package
+
+```csharp
+// ✅ CORRECT - Standardized API responses
+public class ApiResponse<T>
+{
+    public bool Success { get; set; }
+    public T? Data { get; set; }
+    public string? Message { get; set; }
+    public List<string>? Errors { get; set; }
+    public DateTime Timestamp { get; set; }
+    
+    public ApiResponse()
+    {
+        Timestamp = DateTime.UtcNow;
+    }
+    
+    public static ApiResponse<T> SuccessResponse(T data, string? message = null)
+    {
+        return new ApiResponse<T>
+        {
+            Success = true,
+            Data = data,
+            Message = message
+        };
+    }
+    
+    public static ApiResponse<T> ErrorResponse(string message, List<string>? errors = null)
+    {
+        return new ApiResponse<T>
+        {
+            Success = false,
+            Message = message,
+            Errors = errors
+        };
+    }
+}
+```
+
+## 4. Program.cs - Standard Configuration
+
+### Required Middleware Pipeline Order
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// CORS - Environment-specific
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowedOrigins", policy =>
+    {
+        policy.WithOrigins(builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()!)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
+});
+
+// Authentication & Authorization
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.Authority = builder.Configuration["Authentication:Authority"];
+        options.Audience = builder.Configuration["Authentication:Audience"];
+        options.RequireHttpsMetadata = builder.Environment.IsProduction();
+        
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ClockSkew = TimeSpan.Zero
+        };
+    });
+
+// Health Checks - Required for K8S
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<ApplicationDbContext>("database")
+    .AddRedis(builder.Configuration.GetConnectionString("Redis")!, "redis")
+    .AddRabbitMQ(builder.Configuration.GetConnectionString("RabbitMQ")!, "rabbitmq");
+
+// API Versioning
+builder.Services.AddApiVersioning(options =>
+{
+    options.DefaultApiVersion = new ApiVersion(1, 0);
+    options.AssumeDefaultVersionWhenUnspecified = true;
+    options.ReportApiVersions = true;
+    options.ApiVersionReader = new UrlSegmentApiVersionReader();
+});
+
+// Distributed Cache (Redis)
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = builder.Configuration.GetConnectionString("Redis");
+    options.InstanceName = builder.Configuration["Cache:InstanceName"];
+});
+
+// Application layers
+builder.Services.AddApplicationServices();
+builder.Services.AddInfrastructureServices(builder.Configuration);
+builder.Services.AddHttpContextAccessor();
+
+// Controllers
+builder.Services.AddControllers(options =>
+{
+    options.Filters.Add<ValidationFilter>();
+    options.ReturnHttpNotAcceptable = true;
+})
+.AddJsonOptions(options =>
+{
+    options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+    options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
+
+// Logging - Serilog
+builder.Host.UseSerilog((context, configuration) =>
+{
+    configuration
+        .ReadFrom.Configuration(context.Configuration)
+        .Enrich.FromLogContext()
+        .Enrich.WithMachineName()
+        .Enrich.WithEnvironmentName()
+        .WriteTo.Console()
+        .WriteTo.Seq(context.Configuration["Seq:ServerUrl"]!)
+        .WriteTo.ApplicationInsights(
+            context.Configuration["ApplicationInsights:InstrumentationKey"]!,
+            TelemetryConverter.Traces);
+});
+
+var app = builder.Build();
+
+// Middleware pipeline - Order matters!
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+app.UseResponseCompression();
+app.UseSerilogRequestLogging();
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseCors("AllowedOrigins");
+app.UseRateLimiter();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();
+
+// Health check endpoints - Required for K8S
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+});
+
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+});
+
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = _ => false,
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+});
+
+app.Run();
+```
+
+## 5. Controller Standards
+
+### Required Controller Pattern
+
+```csharp
+// ✅ CORRECT - Standard controller structure
+[ApiController]
+[ApiVersion("1.0")]
+[Route("api/v{version:apiVersion}/[controller]")]
+[Produces("application/json")]
+[Consumes("application/json")]
+public class OrdersController : ControllerBase
+{
+    private readonly IMediator _mediator;
+    private readonly ILogger<OrdersController> _logger;
+    
+    public OrdersController(IMediator mediator, ILogger<OrdersController> logger)
+    {
+        _mediator = mediator;
+        _logger = logger;
+    }
+    
+    /// <summary>
+    /// Creates a new order
+    /// </summary>
+    [HttpPost]
+    [ProducesResponseType(typeof(ApiResponse<Guid>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [Authorize(Roles = "Customer,Admin")]
+    [Idempotency]
+    public async Task<IActionResult> CreateOrder(
+        [FromBody] CreateOrderCommand command,
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(command, cancellationToken);
+        
+        if (result.IsFailure)
+        {
+            return BadRequest(ApiResponse<object>.ErrorResponse(result.Error));
+        }
+        
+        return CreatedAtAction(
+            nameof(GetOrder),
+            new { id = result.Value },
+            ApiResponse<Guid>.SuccessResponse(result.Value, "Order created successfully"));
+    }
+    
+    /// <summary>
+    /// Retrieves an order by ID
+    /// </summary>
+    [HttpGet("{id:guid}")]
+    [ProducesResponseType(typeof(ApiResponse<OrderDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ResponseCache(Duration = 60, VaryByQueryKeys = new[] { "id" })]
+    public async Task<IActionResult> GetOrder(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var query = new GetOrderByIdQuery(id);
+        var result = await _mediator.Send(query, cancellationToken);
+        
+        if (result.IsFailure)
+        {
+            return NotFound(ApiResponse<object>.ErrorResponse(result.Error));
+        }
+        
+        return Ok(ApiResponse<OrderDto>.SuccessResponse(result.Value));
+    }
+}
+```
+
+### Controller Requirements
+
+- **Thin controllers:** Use MediatR, no business logic
+- **Async/await:** All operations must be async
+- **CancellationToken:** Always accept and pass through
+- **Result pattern:** Use `Result<T>` for standardized error handling
+- **API versioning:** All controllers must be versioned
+- **OpenAPI documentation:** XML comments and `ProducesResponseType` attributes
+- **Authorization:** Explicit `[Authorize]` attributes
+- **Idempotency:** Support idempotency keys for POST/PUT operations
+
+## 6. Azure Best Practices
+
+### 6.1 Correlation ID Tracking
+
+```csharp
+// ✅ CORRECT - Correlation ID middleware
+public class CorrelationIdMiddleware
+{
+    private const string CorrelationIdHeader = "X-Correlation-ID";
+    private readonly RequestDelegate _next;
+    
+    public CorrelationIdMiddleware(RequestDelegate next)
+    {
+        _next = next;
+    }
+    
+    public async Task InvokeAsync(HttpContext context)
+    {
+        var correlationId = context.Request.Headers[CorrelationIdHeader].FirstOrDefault()
+            ?? Guid.NewGuid().ToString();
+        
+        context.Items["CorrelationId"] = correlationId;
+        context.Response.Headers.Add(CorrelationIdHeader, correlationId);
+        
+        using (LogContext.PushProperty("CorrelationId", correlationId))
+        {
+            await _next(context);
+        }
+    }
+}
+```
+
+### 6.2 Idempotency Support
+
+```csharp
+// ✅ CORRECT - Idempotency attribute
+public class IdempotencyAttribute : ActionFilterAttribute
+{
+    public override async Task OnActionExecutionAsync(
+        ActionExecutingContext context,
+        ActionExecutionDelegate next)
+    {
+        var idempotencyKey = context.HttpContext.Request.Headers["Idempotency-Key"].FirstOrDefault();
+        
+        if (string.IsNullOrEmpty(idempotencyKey))
+        {
+            await next();
+            return;
+        }
+        
+        var cache = context.HttpContext.RequestServices.GetRequiredService<IDistributedCache>();
+        var cachedResponse = await cache.GetStringAsync($"idempotency:{idempotencyKey}");
+        
+        if (cachedResponse != null)
+        {
+            var result = JsonSerializer.Deserialize<object>(cachedResponse);
+            context.Result = new OkObjectResult(result);
+            return;
+        }
+        
+        var executedContext = await next();
+        
+        if (executedContext.Result is ObjectResult objectResult)
+        {
+            var serialized = JsonSerializer.Serialize(objectResult.Value);
+            await cache.SetStringAsync(
+                $"idempotency:{idempotencyKey}",
+                serialized,
+                new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24)
+                });
+        }
+    }
+}
+```
+
+### 6.3 Retry Policies with Polly
+
+```csharp
+// ✅ CORRECT - Standard resilience policies
+public static class HttpClientExtensions
+{
+    public static IHttpClientBuilder AddStandardResiliencePolicies(this IHttpClientBuilder builder)
+    {
+        return builder
+            .AddTransientHttpErrorPolicy(policyBuilder =>
+                policyBuilder.WaitAndRetryAsync(
+                    retryCount: 3,
+                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                    onRetry: (outcome, timespan, retryCount, context) =>
+                    {
+                        // Log retry attempts
+                    }))
+            .AddTransientHttpErrorPolicy(policyBuilder =>
+                policyBuilder.CircuitBreakerAsync(
+                    handledEventsAllowedBeforeBreaking: 5,
+                    durationOfBreak: TimeSpan.FromSeconds(30)));
+    }
+}
+
+// Usage
+services.AddHttpClient<ICustomerServiceClient, CustomerServiceClient>()
+    .AddStandardResiliencePolicies();
+```
+
+## 7. Configuration Management
+
+### Required Configuration Structure
+
+```json
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "#{ConnectionStrings.DefaultConnection}#",
+    "Redis": "#{ConnectionStrings.Redis}#",
+    "RabbitMQ": "#{ConnectionStrings.RabbitMQ}#"
+  },
+  "Authentication": {
+    "Authority": "#{Authentication.Authority}#",
+    "Audience": "#{Authentication.Audience}#"
+  },
+  "ApplicationInsights": {
+    "InstrumentationKey": "#{ApplicationInsights.InstrumentationKey}#"
+  },
+  "Cors": {
+    "AllowedOrigins": [
+      "https://yourdomain.com",
+      "https://app.yourdomain.com"
+    ]
+  },
+  "Serilog": {
+    "MinimumLevel": {
+      "Default": "Information",
+      "Override": {
+        "Microsoft": "Warning",
+        "System": "Warning"
+      }
+    }
+  }
+}
+```
+
+### Configuration Principles
+
+- **Environment variables:** Use for secrets and environment-specific values
+- **12-Factor App:** Configuration via environment variables
+- **No hardcoded values:** All configuration externalized
+- **Type-safe configuration:** Use `IOptions<T>` pattern
+- **Validation:** Validate configuration on startup
+
+## 8. Testing Standards
+
+### Test Structure
+
+- **Unit Tests:** Domain and Application layers
+- **Integration Tests:** API and DB interactions
+- **Functional Tests:** End-to-end API testing
+- **AAA Pattern:** Arrange-Act-Assert for all tests
+
+### Required Test Coverage
+
+- All command/query handlers
+- Domain logic and business rules
+- Repository implementations
+- API endpoints (happy path and error cases)
+
+## 9. Code Quality Requirements
+
+### Required Practices
+
+- **Async/await:** All I/O operations must be async
+- **CancellationToken:** Required for all async methods
+- **Null safety:** Use nullable reference types
+- **Immutability:** Prefer records for DTOs
+- **Validation:** FluentValidation for all commands/queries
+- **Error handling:** Result pattern, no exceptions for business logic
+- **Logging:** Structured logging with correlation IDs
+- **Documentation:** XML comments for public APIs
+
+### Forbidden Patterns
+
+- ❌ No stateful controllers or services
+- ❌ No in-memory caching (use distributed cache)
+- ❌ No static mutable state
+- ❌ No synchronous I/O in async methods
+- ❌ No business logic in controllers
+- ❌ No direct DbContext access in controllers
+- ❌ No fat interfaces
+- ❌ No circular dependencies
+
+## 10. Deployment Requirements
+
+### Kubernetes Readiness
+
+- Health check endpoints (`/health`, `/health/ready`, `/health/live`)
+- Graceful shutdown support
+- Environment-based configuration
+- Horizontal scalability (stateless design)
+- Resource limits and requests defined
+- Liveness and readiness probes configured
+
+### Container Requirements
+
+- Multi-stage Docker builds
+- Non-root user
+- Minimal base images
+- Health check configured
+- Proper signal handling

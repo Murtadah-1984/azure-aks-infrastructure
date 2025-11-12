@@ -1,0 +1,113 @@
+name: ArgoCD Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      application:
+        description: 'ArgoCD application to sync'
+        required: false
+        type: string
+      environment:
+        description: 'Environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+      sync_policy:
+        description: 'Sync policy'
+        required: true
+        type: choice
+        options:
+          - sync
+          - hard-refresh
+          - prune
+  push:
+    branches:
+      - main
+    paths:
+      - 'argocd/**'
+      - 'helm-charts/**'
+      - 'manifests/**'
+
+env:
+  ARGOCD_VERSION: '2.9.0'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  argocd-sync:
+    name: ArgoCD Sync
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3
+      
+      - name: Configure Azure credentials
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      
+      - name: Get AKS credentials
+        run: |
+          RESOURCE_GROUP="${{ secrets.AKS_RESOURCE_GROUP }}"
+          CLUSTER_NAME="${{ secrets.AKS_CLUSTER_NAME }}"
+          az aks get-credentials --resource-group $RESOURCE_GROUP --name $CLUSTER_NAME --overwrite-existing
+          kubectl cluster-info
+        env:
+          RESOURCE_GROUP: ${{ secrets.AKS_RESOURCE_GROUP }}
+          CLUSTER_NAME: ${{ secrets.AKS_CLUSTER_NAME }}
+      
+      - name: Setup ArgoCD CLI
+        run: |
+          curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/download/v${{ env.ARGOCD_VERSION }}/argocd-linux-amd64
+          sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
+          rm argocd-linux-amd64
+      
+      - name: Login to ArgoCD
+        run: |
+          ARGOCD_SERVER=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          if [ -z "$ARGOCD_SERVER" ]; then
+            ARGOCD_SERVER="argocd-server.argocd.svc.cluster.local"
+          fi
+          argocd login $ARGOCD_SERVER --username admin --password ${{ secrets.ARGOCD_ADMIN_PASSWORD }} --insecure || true
+      
+      - name: Sync ArgoCD Application
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.application != ''
+        run: |
+          case "${{ github.event.inputs.sync_policy }}" in
+            sync)
+              argocd app sync ${{ github.event.inputs.application }} --prune
+              ;;
+            hard-refresh)
+              argocd app get ${{ github.event.inputs.application }} --refresh
+              argocd app sync ${{ github.event.inputs.application }} --prune --force
+              ;;
+            prune)
+              argocd app delete ${{ github.event.inputs.application }} --cascade=false
+              ;;
+          esac
+      
+      - name: Sync All Applications
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.application == '')
+        run: |
+          argocd app list -o name | while read app; do
+            echo "::group::Syncing $app"
+            argocd app sync $app --prune || true
+            echo "::endgroup::"
+          done
+      
+      - name: Get Application Status
+        run: |
+          echo "::group::ArgoCD Application Status"
+          argocd app list
+          echo "::endgroup::"
+        continue-on-error: true
+

@@ -1,0 +1,29 @@
+title = "Gitleaks Configuration"
+
+[extend]
+# Use default Gitleaks rules
+useDefault = true
+
+[allowlist]
+description = "Allowlist for known false positives"
+paths = [
+  '''\.git/''',
+  '''\.github/''',
+  '''\.gitleaks\.toml''',
+  '''README\.md''',
+  '''LICENSE''',
+  '''\.md$''',
+]
+
+[[allowlist.regexes]]
+description = "Allow example values in documentation"
+regex = '''(?i)(password|secret|key|token)\s*[:=]\s*['"]?(example|sample|placeholder|changeme|your-.*|xxx|test)['"]?'''
+
+[[allowlist.regexes]]
+description = "Allow Terraform variable declarations"
+regex = '''variable\s+['"](password|secret|key|token)['"]'''
+
+[[allowlist.regexes]]
+description = "Allow commented secrets"
+regex = '''#.*(password|secret|key|token)'''
+

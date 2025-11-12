@@ -1,0 +1,165 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kong-gateway
+  namespace: argocd
+spec:
+  project: infrastructure
+  source:
+    chart: kong
+    repoURL: https://charts.konghq.com
+    targetRevision: 2.35.0
+    helm:
+      releaseName: kong
+      values: |
+        # Kong Gateway Configuration
+        deployment:
+          kong:
+            enabled: true
+        
+        env:
+          database: postgres
+          pg_host: postgresql-ha-pgpool.databases.svc.cluster.local
+          pg_port: 5432
+          pg_user: kong
+          pg_database: kong
+          pg_password:
+            valueFrom:
+              secretKeyRef:
+                name: kong-postgres-secret
+                key: password
+          
+          # Enable Prometheus plugin
+          nginx_http_prometheus_metrics: /metrics
+          
+          # Rate limiting
+          rate_limiting_policy: local
+          
+          # Logging
+          log_level: notice
+          
+          # Admin API
+          admin_listen: 0.0.0.0:8001
+          admin_gui_listen: 0.0.0.0:8002
+        
+        # Ingress Controller
+        ingressController:
+          enabled: true
+          installCRDs: false
+          
+          env:
+            kong_admin_token:
+              valueFrom:
+                secretKeyRef:
+                  name: kong-admin-token
+                  key: token
+          
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+        
+        # Proxy Service
+        proxy:
+          enabled: true
+          type: LoadBalancer
+          
+          annotations:
+            service.beta.kubernetes.io/azure-load-balancer-internal: "false"
+          
+          http:
+            enabled: true
+            servicePort: 80
+            containerPort: 8000
+          
+          tls:
+            enabled: true
+            servicePort: 443
+            containerPort: 8443
+            parameters:
+              - http2
+          
+          ingress:
+            enabled: false
+        
+        # Admin API Service
+        admin:
+          enabled: true
+          type: ClusterIP
+          
+          http:
+            enabled: true
+            servicePort: 8001
+          
+          ingress:
+            enabled: true
+            ingressClassName: nginx
+            hostname: kong-admin.yourdomain.com
+            annotations:
+              cert-manager.io/cluster-issuer: letsencrypt-prod
+              nginx.ingress.kubernetes.io/auth-type: basic
+              nginx.ingress.kubernetes.io/auth-secret: kong-admin-auth
+            tls: true
+        
+        # Manager/GUI
+        manager:
+          enabled: true
+          type: ClusterIP
+          
+          http:
+            enabled: true
+            servicePort: 8002
+          
+          ingress:
+            enabled: true
+            ingressClassName: nginx
+            hostname: kong-manager.yourdomain.com
+            annotations:
+              cert-manager.io/cluster-issuer: letsencrypt-prod
+            tls: true
+        
+        # PostgreSQL (use existing)
+        postgresql:
+          enabled: false
+        
+        # Resources
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
+        
+        # Autoscaling
+        autoscaling:
+          enabled: true
+          minReplicas: 3
+          maxReplicas: 10
+          targetCPUUtilizationPercentage: 75
+        
+        # Pod Disruption Budget
+        podDisruptionBudget:
+          enabled: true
+          maxUnavailable: 1
+        
+        # Service Monitor for Prometheus
+        serviceMonitor:
+          enabled: true
+          interval: 30s
+          labels:
+            release: kube-prometheus-stack
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kong
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

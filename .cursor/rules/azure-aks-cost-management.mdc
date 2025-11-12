@@ -1,0 +1,1053 @@
+---
+description: Azure AKS cost optimization and management best practices
+globs: 
+  - azure/**/*
+  - environments/**/*.yaml
+  - scripts/setup-aks.sh
+  - scripts/setup-azure.sh
+  - **/k8s/**/*.yaml
+  - charts/**/*.yaml
+alwaysApply: false
+---
+
+# Azure AKS Cost Management
+
+Comprehensive cost optimization strategies for Azure Kubernetes Service (AKS) deployments, aligned with [Microsoft's official best practices](https://learn.microsoft.com/en-us/azure/aks/best-practices-cost).
+
+## Core Principles
+
+1. **Embrace FinOps** - Build cost-saving culture with financial accountability
+2. **Right-size resources** - Match VM sizes and pod requests to actual workload needs
+3. **Enable autoscaling** - Use cluster autoscaler, HPA, VPA, and KEDA to scale based on demand
+4. **Use spot instances** - Leverage Azure Spot VMs for non-critical workloads (up to 90% savings)
+5. **Monitor continuously** - Track costs with Azure Cost Management, AKS Cost Analysis add-on, and budgets
+6. **Optimize storage** - Choose appropriate storage classes and retention policies
+7. **Leverage Azure discounts** - Use Reservations, Savings Plans, and Hybrid Benefit
+
+---
+
+## 0. FinOps Foundation
+
+Financial operations (FinOps) combines financial accountability with cloud management. Focus on alignment between finance, operations, and engineering teams.
+
+**Key Practices:**
+- Enable visibility with Microsoft Cost Management and AKS Cost Analysis add-on
+- Establish cost budgets and alerts
+- Regular cost reviews and optimization cycles
+- Resource tagging for cost allocation
+- Use Azure Advisor for cost recommendations
+
+**References:**
+- [FinOps Framework](https://www.finops.org/)
+- [FOCUS Specification](https://www.finops.org/focus/)
+- [What is FinOps?](https://learn.microsoft.com/azure/cost-management-billing/cost-management-billing-overview)
+
+---
+
+## 1. Strategic Infrastructure Selection
+
+### SKU Family Evaluation
+
+Evaluate resource requirements before deployment. Consider VM types based on workload characteristics:
+
+**Azure Spot Virtual Machines:**
+- Up to 90% discount vs pay-as-you-go
+- No SLA guarantees, can be evicted
+- Best for: dev/test, batch processing, flexible execution time
+
+**Arm-based processors (Arm64):**
+- Up to 50% better price-performance than x86
+- Power-efficient and cost-effective
+- Best for: web/app servers, open-source databases, cloud-native apps
+- [AKS Arm64 support](https://learn.microsoft.com/azure/aks/use-arm64-vms)
+
+**GPU Optimized SKUs:**
+- Specialized VMs with single, multiple, or fractional GPUs
+- Best for: graphics rendering, ML training, inferencing
+- [GPU-enabled node pools](https://learn.microsoft.com/azure/aks/gpu-cluster)
+
+### GPU Optimizations
+
+Combat GPU underutilization by partitioning and sharing GPUs across multiple workloads:
+
+**Time-Slicing:**
+- NVIDIA GPU Operator enables time-slicing of GPUs in Kubernetes
+- System administrator defines replicas for a GPU, each handed out independently to pods
+- Apply cluster-wide default or node-specific configurations
+- [Time-slicing GPUs in Kubernetes](https://learn.microsoft.com/azure/aks/gpu-time-slicing)
+
+**Multi-Process Service (MPS):**
+- Enables logical partitioning of memory and compute resources between workloads
+- Allows kernel and memcopy operations from different processes to overlap on GPU
+- Achieves higher GPU utilization and shorter running times
+- [Multi-Process Service (MPS)](https://learn.microsoft.com/azure/aks/gpu-mps)
+
+**Multi-Instance GPUs (MIGs):**
+- Partition GPUs based on NVIDIA Ampere and later architectures
+- Create separate and secure GPU instances for CUDA applications
+- [GPU Operator with MIG](https://learn.microsoft.com/azure/aks/gpu-mig)
+- [Create MIG node pool in AKS](https://learn.microsoft.com/azure/aks/gpu-mig-node-pool)
+
+**Good:**
+```hcl
+# Arm64 for cost-effective production workloads
+default_node_pool {
+  name       = "arm64-prod"
+  vm_size    = "Standard_D4ps_v5"  # Arm64, cost-effective
+  node_count = 3
+}
+
+# Spot VMs for dev/test
+default_node_pool {
+  name       = "spot-dev"
+  vm_size    = "Standard_D2s_v3"
+  priority   = "Spot"
+  node_count = 2
+}
+
+# Burstable VMs for low-traffic workloads
+default_node_pool {
+  name       = "dev"
+  vm_size    = "Standard_B2s"  # Burstable, cost-effective
+  node_count = 2
+}
+```
+
+**Bad:**
+```hcl
+# Over-provisioned VMs
+default_node_pool {
+  vm_size    = "Standard_D16s_v3"  # Too large for workload
+  node_count = 5  # Too many nodes
+}
+
+# Using expensive VMs for dev/test
+default_node_pool {
+  vm_size    = "Standard_D8s_v3"  # Overkill for dev
+  node_count = 3
+}
+```
+
+### Cluster Preset Configurations
+
+Use cluster preset configurations in Azure portal for cost-conscious, performant setups:
+
+- **Dev/Test preset:** Best for developing new workloads or testing
+- **Production Economy preset:** Best for production traffic in cost-conscious way (tolerates interruptions)
+
+Preset values can be modified at any time.
+
+### Multitenancy Considerations
+
+Multitenancy refers to sharing infrastructure across tenants, teams, and business units. Choose the right model based on isolation needs and cost efficiency:
+
+| Multitenancy Type | Isolation Level | Pod Density | Cost Allocation | Ideal Use Case | Potential Risks |
+|------------------|----------------|-------------|------------------|---------------|-----------------|
+| **Dedicated Cluster** | Hard multitenancy | Lower | Easiest | Complete security isolation, straightforward cost allocation | Cluster sprawl adds management overhead, lower pod density, overprovisioned resources |
+| **Dedicated Node Pool** | Soft multitenancy | Medium | Medium | Medium pod density, some shared infrastructure | Requires trust between tenants, needs network policies, quotas, RBAC |
+| **Dedicated Namespace** | Soft multitenancy | Higher | Harder | Maximize resource utilization, best binpacking | Unsafe for hostile environments, requires security measures if tenants can't be trusted |
+
+**Dedicated Cluster:**
+- Clusters dedicated to single workload/team
+- **Pros:** Easier isolation, straightforward cost allocation, great for untrusted tenants
+- **Cons:** High management/financial overhead, low pod density, overprovisioned resources
+
+**Dedicated Node Pool:**
+- Clusters shared by many tenants, node pools dedicated per tenant
+- **Pros:** Medium pod density, some shared infrastructure, can apply Azure tags to node pools
+- **Cons:** Requires trust, needs network policies, quotas, RBAC
+
+**Dedicated Namespace:**
+- Clusters shared by many tenants, namespaces as isolation boundary
+- **Pros:** Higher pod density, best binpacking, maximizes resource utilization
+- **Cons:** Unsafe for hostile environments by default, requires extra security measures
+
+⚠️ **Warning:** Kubernetes environments aren't entirely safe for hostile multitenancy. Plan carefully if tenants can't be trusted.
+
+**References:**
+- [AKS multitenancy considerations](https://learn.microsoft.com/azure/aks/operator-best-practices-multi-tenancy)
+- [Design clusters for multitenancy](https://learn.microsoft.com/azure/aks/design-clusters-multitenancy)
+
+### Cluster Autoscaler
+
+**Always enable cluster autoscaler:**
+
+```hcl
+resource "azurerm_kubernetes_cluster" "platform" {
+  # ... other config ...
+  
+  default_node_pool {
+    name                = "default"
+    vm_size             = "Standard_D2s_v3"
+    enable_auto_scaling = true
+    min_count           = 1
+    max_count           = 10
+    node_count          = null  # Required when autoscaling enabled
+  }
+}
+```
+
+**Azure CLI:**
+```bash
+az aks update \
+  --resource-group platform-rg \
+  --name platform-aks \
+  --enable-cluster-autoscaler \
+  --min-count 1 \
+  --max-count 10
+```
+
+**Cluster Autoscaler Profile:**
+Profile settings apply to all autoscaler-enabled node pools. Configure for optimal scaling behavior.
+
+### Node Autoprovisioning (NAP)
+
+For complex workloads requiring multiple node pools with different VM sizes, use Node Autoprovision (NAP):
+
+- Automatically selects optimal VM configuration based on pending pod requirements
+- Simplifies SKU selection process
+- Runs workloads in most efficient and cost-effective manner
+- Reduces operational overhead of managing multiple node pools
+
+**Enable NAP:**
+```bash
+az aks nodepool add \
+  --resource-group platform-rg \
+  --cluster-name platform-aks \
+  --name nap-pool \
+  --enable-cluster-autoscaler \
+  --min-count 0 \
+  --max-count 10 \
+  --mode Auto
+```
+
+### Spot Instances for Non-Critical Workloads
+
+**Use spot node pools for dev/test and batch workloads (up to 90% savings):**
+
+```hcl
+resource "azurerm_kubernetes_cluster_node_pool" "spot" {
+  name                  = "spot"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.platform.id
+  vm_size               = "Standard_D2s_v3"
+  priority              = "Spot"
+  eviction_policy       = "Delete"
+  spot_max_price        = 0.05  # Max price per hour (optional)
+  enable_auto_scaling   = true
+  min_count             = 0
+  max_count             = 5
+  node_labels = {
+    workload-type = "spot"
+  }
+  node_taints = ["kubernetes.azure.com/scalesetpriority=spot:NoSchedule"]
+}
+```
+
+**Tolerate spot nodes in deployments:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      tolerations:
+      - key: "kubernetes.azure.com/scalesetpriority"
+        operator: "Equal"
+        value: "spot"
+        effect: "NoSchedule"
+      nodeSelector:
+        workload-type: "spot"
+```
+
+**Use Cases:**
+- Dev/test environments
+- Batch processing jobs
+- Workloads with flexible execution time
+- Non-critical production workloads that can handle interruptions
+
+### Capacity Reservations
+
+Reserve compute capacity in Azure region/availability zone to guarantee allocated capacity and avoid on-demand pricing spikes:
+
+```bash
+# Create capacity reservation group
+az capacity reservation group create \
+  --resource-group platform-rg \
+  --name platform-crg \
+  --location eastus
+
+# Associate with node pool
+az aks nodepool update \
+  --resource-group platform-rg \
+  --cluster-name platform-aks \
+  --name prod-pool \
+  --capacity-reservation-group platform-crg
+```
+
+---
+
+## 2. Build Cloud Native Applications
+
+### Lean Containers
+
+Optimize container size and resource footprint:
+
+**Best Practices:**
+- Use minimal base images (Alpine, distroless)
+- Remove unnecessary libraries and packages
+- Only include required dependencies
+- Smaller images = faster deployments and scaling
+
+**Artifact Streaming:**
+Enable Artifact Streaming on AKS to stream container images from ACR:
+- Pulls only necessary layers for initial pod startup
+- Reduces pull time from minutes to seconds
+- Especially beneficial for larger images
+
+```bash
+# Enable artifact streaming
+az aks update \
+  --resource-group platform-rg \
+  --name platform-aks \
+  --enable-artifact-streaming
+```
+
+### Resource Requests and Limits
+
+**Always set appropriate requests and limits:**
+
+```yaml
+# Good: Right-sized resources
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "250m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+```
+
+**Bad: Missing or excessive resources:**
+```yaml
+# Bad: No resource constraints
+resources: {}
+
+# Bad: Over-provisioned
+resources:
+  requests:
+    memory: "4Gi"
+    cpu: "2000m"
+```
+
+### Resource Quotas
+
+**Set namespace quotas to prevent over-allocation (essential for multitenancy):**
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: platform-quota
+  namespace: platform
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: "8Gi"
+    limits.cpu: "8"
+    limits.memory: "16Gi"
+    pods: "20"
+    persistentvolumeclaims: "10"
+    requests.storage: "100Gi"
+```
+
+Resource quotas are critical for multitenant clusters where teams share infrastructure.
+
+### Cluster Start/Stop
+
+Turn off clusters that don't need to run continuously (dev/test):
+
+```bash
+# Stop cluster (saves compute costs)
+az aks stop \
+  --resource-group platform-rg \
+  --name platform-aks-dev
+
+# Start cluster (maintains state)
+az aks start \
+  --resource-group platform-rg \
+  --name platform-aks-dev
+```
+
+**Benefits:**
+- Shuts down all system and user node pools
+- No compute charges while stopped
+- Cluster state and objects maintained
+- Perfect for dev/test environments
+
+---
+
+## 3. Optimize Workloads Through Autoscaling
+
+### Establish Baseline
+
+Before configuring autoscaling, establish baseline with Azure Load Testing:
+
+- Understand application behavior under different traffic conditions
+- Identify performance bottlenecks
+- Configure autoscaling based on expected load patterns
+
+### Vertical Pod Autoscaling (VPA)
+
+VPA fine-tunes CPU and memory resources based on historical container usage:
+
+**Use Cases:**
+- Applications with fluctuating resource demands
+- Fine-tuning requests/limits that are too high/low
+- Recommendations-only mode for testing
+
+**⚠️ Warning:** Don't use VPA with HPA on the same CPU/memory metrics. Can use VPA for CPU/memory with HPA for custom metrics.
+
+```yaml
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: service-vpa
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: service-api
+  updatePolicy:
+    updateMode: "Off"  # Recommendation-only mode
+    # Or "Auto" for automatic updates
+  resourcePolicy:
+    containerPolicies:
+    - containerName: service-api
+      minAllowed:
+        cpu: 100m
+        memory: "128Mi"
+      maxAllowed:
+        cpu: "2"
+        memory: "4Gi"
+```
+
+**Modes:**
+- **Off:** Recommendation-only (review before applying)
+- **Initial:** Set requests on pod creation
+- **Auto:** Automatically update requests/limits
+- **Recreate:** Recreate pods with new resources
+
+### Horizontal Pod Autoscaling (HPA)
+
+HPA dynamically scales pod replicas based on observed metrics:
+
+**Best for:** Applications with predictable resource demands
+
+**HPA Timing:**
+- Metrics API gets data from kubelet every **60 seconds**
+- HPA checks Metrics API every **15 seconds** for changes
+- HPA updates every **60 seconds** by default
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: service-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70  # Scale at 70% CPU
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80  # Scale at 80% memory
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5 min cooldown
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0  # Fast scale-up
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+```
+
+**References:**
+- [Horizontal Pod Autoscaling](https://learn.microsoft.com/azure/aks/concepts-scale#horizontal-pod-autoscaler)
+- [Autoscale pods in AKS](https://learn.microsoft.com/azure/aks/tutorial-kubernetes-scale#autoscale-pods)
+
+**Bad: Aggressive or missing HPA:**
+```yaml
+# Bad: Too aggressive scaling
+minReplicas: 10
+maxReplicas: 100
+averageUtilization: 50  # Too low threshold
+
+# Bad: No HPA configured
+```
+
+### Kubernetes Event-driven Autoscaling (KEDA)
+
+KEDA provides flexibility to scale based on event-driven metrics:
+
+**Features:**
+- Works with HPA and extends functionality without overwriting or duplication
+- Scale based on HTTP request traffic, message queue length, etc.
+- Scale down to 0 replicas (great for sporadic workloads)
+- Rich catalog of Azure KEDA scalers with managed support
+- Perfect for: event-driven workloads, periodic ML/GPU jobs, dev/test
+
+**KEDA Add-on for AKS:**
+```bash
+# Install KEDA add-on for AKS
+az aks addon enable \
+  --resource-group platform-rg \
+  --name platform-aks \
+  --addon-name keda
+```
+
+**Example - HTTP Scaler:**
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: http-scaledobject
+spec:
+  scaleTargetRef:
+    name: service-api
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  triggers:
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus:9090
+      metricName: http_requests_per_second
+      threshold: '100'
+```
+
+**Example - Azure Queue Scaler:**
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: queue-scaledobject
+spec:
+  scaleTargetRef:
+    name: processor-job
+  minReplicaCount: 0
+  maxReplicaCount: 5
+  triggers:
+  - type: azure-queue
+    metadata:
+      queueName: processing-queue
+      queueLength: '10'
+      connectionFromEnv: AZURE_STORAGE_CONNECTION_STRING
+```
+
+**References:**
+- [Application autoscaling with KEDA add-on](https://learn.microsoft.com/azure/aks/keda-about)
+- [Install KEDA add-on for AKS](https://learn.microsoft.com/azure/aks/keda-install)
+
+---
+
+## 4. Storage Cost Optimization
+
+### Storage Class Selection
+
+**Use appropriate storage classes:**
+
+```yaml
+# Good: Standard SSD for most workloads
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-data
+spec:
+  storageClassName: managed-premium  # Premium SSD for production
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi  # Right-sized, not over-provisioned
+```
+
+**Storage class recommendations:**
+- **Development:** `managed` (Standard HDD) - cheapest
+- **Production:** `managed-premium` (Premium SSD) - performance
+- **Backups:** `azurefile` (Azure Files) - shared storage
+
+### Storage Retention Policies
+
+**Set appropriate retention for logs and metrics:**
+
+```yaml
+# Prometheus retention
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      retention: 15d  # Not 30d+ for cost savings
+```
+
+---
+
+## 5. Monitor Environment and Spend
+
+### Microsoft Cost Management
+
+Microsoft Cost Management is a suite of FinOps tools that help analyze, monitor, and optimize cloud costs. Available for Azure customers with access to billing account, subscription, resource group, or management group.
+
+**Enable AKS Cost Analysis Add-on:**
+Provides granular cluster cost breakdown by Kubernetes constructs (clusters, namespaces) along with Azure Compute, Network, and Storage categories.
+
+```bash
+# Enable AKS Cost Analysis add-on
+az aks addon enable \
+  --resource-group platform-rg \
+  --name platform-aks \
+  --addon-name costanalysis
+```
+
+**Capabilities:**
+- Cloud budgeting and forecasting
+- Visibility for costs inside and outside cluster
+- Spending trends and optimization opportunities
+- Accountability among developers and platform teams
+- View costs scoped to Kubernetes constructs
+
+**References:**
+- [Understand AKS usage and costs](https://learn.microsoft.com/en-us/azure/aks/understand-aks-costs)
+- [Enable AKS cost analysis add-on](https://learn.microsoft.com/azure/aks/cost-analysis)
+- [View Kubernetes costs](https://learn.microsoft.com/azure/aks/view-kubernetes-costs)
+
+### Cost Analysis Workbooks
+
+**Azure Cost Optimization Workbook:**
+Provides comprehensive view of Azure costs and recommendations for optimizing them.
+
+**Azure Orphaned Resources Workbook:**
+Helps identify and manage unused resources in your Azure environment to reduce waste.
+
+Both workbooks are available in Azure Portal and provide actionable insights for cost optimization.
+
+### Azure Monitor Optimization
+
+**Migrate to Managed Prometheus:**
+- Significant cost reduction vs Container Insights metrics
+- Disable Container Insights metrics using DCR
+- Deploy managed Prometheus add-on
+- Supports ARM, CLI, Portal, and Terraform
+
+```bash
+# Disable Container Insights metrics
+az monitor data-collection rule update \
+  --resource-group platform-rg \
+  --name container-insights-rule \
+  --disable-metrics
+
+# Enable managed Prometheus
+az aks addon enable \
+  --resource-group platform-rg \
+  --name platform-aks \
+  --addon-name prometheus
+```
+
+**References:**
+- [Azure Monitor best practices](https://learn.microsoft.com/azure/azure-monitor/best-practices-cost)
+- [Managing costs for Container insights](https://learn.microsoft.com/azure/azure-monitor/containers/container-insights-cost)
+
+### Log Analytics Optimization
+
+**Control Plane Logs:**
+- Disable categories you don't need
+- Use Basic Logs API when applicable
+- [AKS control plane/resource logs](https://learn.microsoft.com/azure/aks/monitor-aks-reference)
+
+**Data Plane Logs (Application Logs):**
+- Adjust cost optimization settings
+- Use Transformations to filter/modify logs before sending to Log Analytics
+
+**Transformations Example:**
+```bash
+# Create transformation to filter logs
+az monitor log-analytics workspace data-export create \
+  --resource-group platform-rg \
+  --workspace-name platform-logs \
+  --name filter-transformation \
+  --destination storage-account-id /subscriptions/{sub-id}/resourceGroups/{rg}/providers/Microsoft.Storage/storageAccounts/{account}
+```
+
+### Azure Advisor Cost Recommendations
+
+AKS cost recommendations in Azure Advisor provide optimization solutions:
+
+- Analyzes resource configurations
+- Recommends cost-efficiency without sacrificing reliability
+- [Get AKS cost recommendations](https://learn.microsoft.com/azure/advisor/advisor-cost-recommendations)
+
+### Resource Tagging
+
+**Tag all resources for cost tracking:**
+
+```hcl
+resource "azurerm_kubernetes_cluster" "platform" {
+  # ... config ...
+  
+  tags = {
+    Environment   = "production"
+    CostCenter    = "engineering"
+    Project       = "platform"
+    ManagedBy     = "terraform"
+    AutoShutdown  = "false"
+  }
+}
+```
+
+### Cost Budgets and Alerts
+
+**Set up cost budgets:**
+
+```bash
+# Create budget alert
+az consumption budget create \
+  --budget-name aks-monthly-budget \
+  --amount 1000 \
+  --time-grain Monthly \
+  --start-date 2024-01-01T00:00:00Z \
+  --end-date 2025-12-31T23:59:59Z \
+  --resource-group platform-rg
+```
+
+### Cost Analysis Queries
+
+**Monitor AKS costs:**
+
+```bash
+# Query AKS costs
+az consumption usage list \
+  --start-date 2024-01-01 \
+  --end-date 2024-01-31 \
+  --query "[?contains(meterCategory, 'Container')]"
+```
+
+---
+
+## 6. Environment-Specific Configurations
+
+### Development Environment
+
+```yaml
+# environments/dev.yaml
+azure:
+  nodeCount: 1
+  nodeVmSize: Standard_B2s  # Burstable
+  enableAutoScaling: true
+  minCount: 1
+  maxCount: 3
+  enableSpotNodes: true
+```
+
+### Production Environment
+
+```yaml
+# environments/production.yaml
+azure:
+  nodeCount: 3
+  nodeVmSize: Standard_D4s_v3  # Standard
+  enableAutoScaling: true
+  minCount: 3
+  maxCount: 10
+  enableSpotNodes: false
+  enableReservedInstances: true  # Consider 1-year reserved
+```
+
+---
+
+## 7. Save with Azure Discounts
+
+### Azure Reservations
+
+**Best for:** Predictable workloads committed to same SKUs and regions over extended period
+
+**Benefits:**
+- Up to 72% discount vs pay-as-you-go
+- 1-year or 3-year terms
+- Automatically applies to matching resources
+
+```bash
+# Purchase reserved capacity (1-year, 3-year)
+az vm reservation create \
+  --reserved-resource-type virtualMachines \
+  --billing-scope-id /subscriptions/{subscription-id} \
+  --term P1Y \
+  --quantity 3 \
+  --sku Standard_D4s_v3
+```
+
+**Use Cases:**
+- Production workloads with steady demand
+- Predictable resource usage patterns
+- Long-term commitments (1-3 years)
+
+### Azure Savings Plan
+
+**Best for:** Consistent spend with disparate resources across SKUs and regions
+
+**Benefits:**
+- 1-year or 3-year terms
+- Save up to **65%** compared to pay-as-you-go
+- Commit to fixed hourly spend on compute
+- Automatically applies to any resources within benefit scope
+- More flexible than Reservations (different SKUs/regions)
+- No SKU family or region restrictions
+
+```bash
+# Purchase Savings Plan
+az consumption savings-plan create \
+  --savings-plan-order-id {order-id} \
+  --applied-scope-type Single \
+  --applied-scope /subscriptions/{subscription-id} \
+  --commitment-amount 100 \
+  --term P1Y
+```
+
+**Use Cases:**
+- Workloads utilizing different resources
+- Different data center regions
+- Variable SKU usage patterns
+- Consistent costs with resources in various SKUs and regions
+
+**References:**
+- [Azure Savings Plans](https://learn.microsoft.com/azure/cost-management-billing/savings-plan/savings-plan-compute-overview)
+
+### Azure Hybrid Benefit
+
+Maximize on-premises licenses at no extra cost:
+
+- Use qualifying on-premises licenses with Software Assurance (SA)
+- Get Windows VMs on Azure at reduced cost
+- [Azure Hybrid Benefit for AKS](https://learn.microsoft.com/azure/aks/use-hybrid-benefit)
+
+---
+
+## 8. Operate Cost-Optimized AKS at Scale
+
+### Azure Kubernetes Fleet Manager (Kubernetes Fleet)
+
+Azure Kubernetes Fleet Manager enables at-scale management of multiple AKS clusters:
+
+**Benefits:**
+- Reduce management overhead cost of operating multiple clusters
+- Single entry point for managing multiple clusters
+- Orchestrate updates across multiple clusters
+- Propagate Kubernetes resources across multiple clusters
+- Create Fleet resource with or without hub cluster
+
+**Hub Cluster:**
+- Managed AKS cluster that acts as hub to store and propagate Kubernetes resources
+- Optional but recommended for centralized management
+
+**Resource Propagation:**
+- Propagate Kubernetes resources (ConfigMaps, Secrets, Deployments) across multiple clusters
+- Ensures consistency and reduces manual configuration overhead
+
+**Use Cases:**
+- Managing multiple AKS clusters across environments (dev, staging, prod)
+- Centralized configuration management
+- Reducing operational costs at scale
+
+**References:**
+- [Azure Kubernetes Fleet Manager](https://learn.microsoft.com/azure/aks/kubernetes-fleet)
+- [Operate cost-optimized AKS at scale](https://learn.microsoft.com/en-us/azure/aks/operate-cost-optimized-scale)
+
+---
+
+## 9. Monitoring and Optimization
+
+### Cost Monitoring Dashboard
+
+**Track key metrics:**
+- Node utilization (CPU/Memory)
+- Pod resource requests vs actual usage
+- Storage consumption
+- Network egress costs
+- Log Analytics ingestion
+- AKS Cost Analysis add-on metrics
+
+### Regular Optimization Tasks
+
+1. **Weekly:** Review pod resource usage vs requests, check VPA recommendations
+2. **Monthly:** Analyze cost reports, review Azure Advisor recommendations, identify waste
+3. **Quarterly:** Review reserved instance/Savings Plan opportunities, right-size node pools
+4. **Annually:** Comprehensive cost review, evaluate discount programs, update budgets
+
+### Cost Optimization Checklist
+
+**Infrastructure:**
+- [ ] Cluster autoscaler enabled with appropriate min/max
+- [ ] Node Autoprovisioning (NAP) considered for complex workloads
+- [ ] Spot instances used for non-critical workloads
+- [ ] Arm64 VMs evaluated for cost-effective workloads
+- [ ] Cluster preset configurations used where applicable
+- [ ] Cluster start/stop enabled for dev/test environments
+- [ ] Capacity reservations for predictable high-demand periods
+- [ ] Azure Kubernetes Fleet Manager for multi-cluster management
+- [ ] GPU optimizations (time-slicing, MPS, MIGs) for GPU workloads
+- [ ] Right-sized clusters based on actual workload needs
+
+**Workloads:**
+- [ ] HPA configured for all services with predictable demands (checks every 15s, updates every 60s)
+- [ ] VPA configured for services with fluctuating demands
+- [ ] KEDA add-on installed and used for event-driven workloads
+- [ ] Resource requests/limits set appropriately
+- [ ] Resource quotas configured for multitenancy
+- [ ] Lean containers with minimal base images
+- [ ] Artifact Streaming enabled for faster deployments
+
+**Storage & Monitoring:**
+- [ ] Storage classes optimized per workload
+- [ ] Log retention policies configured (7-15 days)
+- [ ] Managed Prometheus enabled (vs Container Insights)
+- [ ] Log Analytics transformations configured
+- [ ] Basic Logs API used where applicable
+
+**Cost Management:**
+- [ ] AKS Cost Analysis add-on enabled
+- [ ] Azure Cost Optimization workbook reviewed
+- [ ] Azure Orphaned Resources workbook reviewed
+- [ ] Cost budgets and alerts configured
+- [ ] Resources tagged for cost tracking
+- [ ] Azure Advisor recommendations reviewed regularly
+- [ ] Azure Reservations evaluated for production (up to 72% savings)
+- [ ] Azure Savings Plan evaluated for variable workloads (up to 65% savings)
+- [ ] Azure Hybrid Benefit applied where applicable
+- [ ] Regular cost reviews scheduled
+
+---
+
+## 10. Common Cost Pitfalls to Avoid
+
+**Bad Practices:**
+- ❌ Over-provisioned VM sizes (not evaluating Arm64 or appropriate SKUs)
+- ❌ Missing resource requests/limits
+- ❌ No cluster autoscaler or HPA/VPA/KEDA
+- ❌ Excessive node counts
+- ❌ Long log retention (30d+)
+- ❌ Premium storage for all workloads
+- ❌ Missing cost budgets/alerts
+- ❌ Untagged resources
+- ❌ Using Container Insights metrics instead of managed Prometheus
+- ❌ Not using cluster start/stop for dev/test
+- ❌ Missing resource quotas in multitenant clusters
+- ❌ Large container images without Artifact Streaming
+- ❌ Not evaluating Azure Reservations or Savings Plans
+- ❌ Running dev/test clusters 24/7
+
+**Good Practices:**
+- ✅ Right-sized VMs (evaluate Arm64, Spot, Burstable)
+- ✅ Proper resource requests matching workload
+- ✅ Cluster autoscaler with appropriate min/max
+- ✅ HPA for predictable workloads, VPA for fluctuating, KEDA for event-driven
+- ✅ Spot instances for dev/test and batch workloads
+- ✅ Appropriate log retention (7-15 days)
+- ✅ Storage class selection based on needs
+- ✅ Managed Prometheus instead of Container Insights
+- ✅ Log Analytics transformations and Basic Logs
+- ✅ Cost budgets with alerts
+- ✅ Comprehensive resource tagging
+- ✅ AKS Cost Analysis add-on enabled
+- ✅ Cluster start/stop for dev/test
+- ✅ Resource quotas for multitenancy
+- ✅ Lean containers with Artifact Streaming
+- ✅ Azure Reservations for predictable workloads
+- ✅ Azure Savings Plan for variable workloads
+- ✅ Azure Hybrid Benefit where applicable
+
+---
+
+## 11. Cost Estimation
+
+**Typical AKS costs (eastus region):**
+- Standard_D2s_v3: ~$0.096/hour (~$70/month)
+- Standard_D4s_v3: ~$0.192/hour (~$140/month)
+- Cluster management: ~$0.10/hour (~$73/month)
+- Log Analytics: ~$2.30/GB ingested
+
+**Cost optimization impact:**
+- Cluster autoscaler: 30-50% savings
+- Spot instances: 60-90% savings
+- Reserved instances: 20-72% savings
+- Right-sizing: 20-40% savings
+
+---
+
+## References
+
+### Official Microsoft Documentation
+
+- [Best practices for cost optimization in AKS](https://learn.microsoft.com/en-us/azure/aks/best-practices-cost) - **Primary Reference**
+- [Understand AKS usage and costs](https://learn.microsoft.com/en-us/azure/aks/understand-aks-costs) - **Cost Analysis Resources**
+- [Optimize AKS usage and costs](https://learn.microsoft.com/en-us/azure/aks/optimize-aks-costs) - **Optimization Techniques**
+- [Operate cost-optimized AKS at scale](https://learn.microsoft.com/en-us/azure/aks/operate-cost-optimized-scale) - **Multi-Cluster Management**
+- [Microsoft Azure Well-Architected Framework for AKS: Cost optimization](https://learn.microsoft.com/azure/architecture/framework/services/compute/azure-kubernetes-service/cost-optimization)
+- [Baseline architecture guide for AKS](https://learn.microsoft.com/azure/architecture/reference-architectures/containers/aks/baseline-aks)
+- [Optimize compute costs on AKS](https://learn.microsoft.com/azure/aks/optimize-compute-costs)
+- [AKS cost optimization techniques](https://learn.microsoft.com/azure/aks/cost-optimization-techniques)
+
+### Infrastructure & Scaling
+
+- [AKS Cluster Autoscaler](https://learn.microsoft.com/azure/aks/cluster-autoscaler)
+- [Node Autoprovisioning (NAP)](https://learn.microsoft.com/azure/aks/node-autoprovisioning)
+- [Azure Spot VMs](https://learn.microsoft.com/azure/virtual-machines/spot-vms)
+- [Use Arm64 VMs in AKS](https://learn.microsoft.com/azure/aks/use-arm64-vms)
+- [GPU-enabled node pools](https://learn.microsoft.com/azure/aks/gpu-cluster)
+- [Cluster start/stop](https://learn.microsoft.com/azure/aks/start-stop-cluster)
+
+### Autoscaling
+
+- [Vertical Pod Autoscaler (VPA)](https://learn.microsoft.com/azure/aks/vertical-pod-autoscaler)
+- [Horizontal Pod Autoscaler (HPA)](https://learn.microsoft.com/azure/aks/horizontal-pod-autoscaler)
+- [Kubernetes Event-driven Autoscaler (KEDA)](https://learn.microsoft.com/azure/aks/keda-about)
+- [Performance and scaling for small to medium workloads](https://learn.microsoft.com/azure/aks/performance-small-medium-workloads)
+- [Performance and scaling best practices for large workloads](https://learn.microsoft.com/azure/aks/performance-large-workloads)
+
+### Cost Management
+
+- [Azure AKS Pricing](https://azure.microsoft.com/pricing/details/kubernetes-service/)
+- [Azure Cost Management](https://learn.microsoft.com/azure/cost-management-billing/)
+- [Azure Reservations](https://learn.microsoft.com/azure/cost-management-billing/reservations/)
+- [Azure Savings Plan](https://learn.microsoft.com/azure/cost-management-billing/savings-plan/)
+- [Azure Hybrid Benefit for AKS](https://learn.microsoft.com/azure/aks/use-hybrid-benefit)
+
+### Monitoring & Optimization
+
+- [AKS Cost Analysis add-on](https://learn.microsoft.com/azure/aks/cost-analysis)
+- [Azure Monitor best practices](https://learn.microsoft.com/azure/azure-monitor/best-practices-cost)
+- [Managing costs for Container insights](https://learn.microsoft.com/azure/azure-monitor/containers/container-insights-cost)
+- [Azure Advisor cost recommendations](https://learn.microsoft.com/azure/advisor/advisor-cost-recommendations)
+
+### Multitenancy & Storage
+
+- [AKS considerations for multitenancy](https://learn.microsoft.com/azure/aks/operator-best-practices-multi-tenancy)
+- [Design clusters for multitenancy](https://learn.microsoft.com/azure/aks/design-clusters-multitenancy)
+- [Best practices for storage and backups](https://learn.microsoft.com/azure/aks/operator-best-practices-storage)
+- [Storage options for applications](https://learn.microsoft.com/azure/aks/concepts-storage)

@@ -1,0 +1,60 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgresql-ha
+  namespace: argocd
+spec:
+  project: data
+  source:
+    chart: postgresql-ha
+    repoURL: https://charts.bitnami.com/bitnami
+    targetRevision: 12.3.2
+    helm:
+      releaseName: postgresql
+      values: |
+        postgresql:
+          replicaCount: 3
+          username: postgres
+          database: appdb
+          existingSecret: postgresql-credentials
+          
+          persistence:
+            enabled: true
+            storageClass: managed-csi-premium
+            size: 100Gi
+          
+          resources:
+            requests:
+              memory: 2Gi
+              cpu: 1000m
+            limits:
+              memory: 4Gi
+              cpu: 2000m
+        
+        pgpool:
+          replicaCount: 2
+          adminUsername: admin
+          existingSecret: pgpool-credentials
+        
+        metrics:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+        
+        backup:
+          enabled: true
+          cronjob:
+            schedule: "0 2 * * *"
+            storage:
+              existingClaim: postgresql-backup-pvc
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: databases
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

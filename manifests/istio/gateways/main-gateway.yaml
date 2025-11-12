@@ -1,0 +1,57 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: main-gateway
+  namespace: istio-ingress
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    # HTTP
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*.yourdomain.com"
+      tls:
+        httpsRedirect: true
+    
+    # HTTPS
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      hosts:
+        - "*.yourdomain.com"
+      tls:
+        mode: SIMPLE
+        credentialName: wildcard-tls-cert  # cert-manager certificate
+    
+    # gRPC
+    - port:
+        number: 443
+        name: grpc
+        protocol: HTTPS
+      hosts:
+        - "grpc.yourdomain.com"
+      tls:
+        mode: SIMPLE
+        credentialName: grpc-tls-cert
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: internal-gateway
+  namespace: istio-ingress
+spec:
+  selector:
+    istio: ingressgateway-internal
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*.internal.yourdomain.com"

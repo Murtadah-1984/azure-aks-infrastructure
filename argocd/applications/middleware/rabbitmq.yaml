@@ -1,0 +1,57 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rabbitmq-cluster
+  namespace: argocd
+spec:
+  project: middleware
+  source:
+    chart: rabbitmq-cluster-operator
+    repoURL: https://charts.bitnami.com/bitnami
+    targetRevision: 3.11.1
+    helm:
+      releaseName: rabbitmq
+      values: |
+        replicaCount: 3
+        
+        auth:
+          username: admin
+          existingPasswordSecret: rabbitmq-credentials
+          existingErlangSecret: rabbitmq-erlang-cookie
+        
+        persistence:
+          enabled: true
+          storageClass: managed-csi-premium
+          size: 50Gi
+        
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: 1000m
+          limits:
+            memory: 4Gi
+            cpu: 2000m
+        
+        metrics:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+        
+        ingress:
+          enabled: true
+          ingressClassName: nginx
+          hostname: rabbitmq.yourdomain.com
+          annotations:
+            cert-manager.io/cluster-issuer: letsencrypt-prod
+          tls: true
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: middleware
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

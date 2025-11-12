@@ -1,0 +1,54 @@
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: mesh-telemetry
+  namespace: istio-system
+spec:
+  metrics:
+    - providers:
+        - name: prometheus
+      overrides:
+        - match:
+            metric: ALL_METRICS
+          tagOverrides:
+            request_protocol:
+              operation: UPSERT
+            response_code:
+              operation: UPSERT
+  
+  tracing:
+    - providers:
+        - name: jaeger
+      randomSamplingPercentage: 10.0
+      customTags:
+        cluster_name:
+          literal:
+            value: "aks-production"
+  
+  accessLogging:
+    - providers:
+        - name: envoy
+      filter:
+        expression: response.code >= 400
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-grafana-dashboards
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+data:
+  istio-mesh-dashboard.json: |
+    {
+      "dashboard": "Import from https://grafana.com/grafana/dashboards/7639"
+    }
+  istio-service-dashboard.json: |
+    {
+      "dashboard": "Import from https://grafana.com/grafana/dashboards/7636"
+    }
+  istio-workload-dashboard.json: |
+    {
+      "dashboard": "Import from https://grafana.com/grafana/dashboards/7630"
+    }

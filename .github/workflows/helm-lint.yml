@@ -1,0 +1,99 @@
+name: Helm Lint
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'helm-charts/**'
+      - 'argocd/**'
+      - '.github/workflows/helm-lint.yml'
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'helm-charts/**'
+      - 'argocd/**'
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  HELM_VERSION: '3.12.0'
+  KUBERNETES_VERSION: '1.28.0'
+
+permissions:
+  contents: read
+
+jobs:
+  helm-lint:
+    name: Helm Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3
+      
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+      
+      - name: Setup Kubernetes tools
+        uses: azure/setup-kubectl@v4
+        with:
+          version: ${{ env.KUBERNETES_VERSION }}
+      
+      - name: Lint Helm Charts
+        run: |
+          echo "::group::Linting Helm Charts"
+          find helm-charts -type f -name "Chart.yaml" -exec dirname {} \; | sort -u | while read chart_dir; do
+            echo "::group::Linting $chart_dir"
+            helm lint "$chart_dir" --strict
+            helm template "$chart_dir" | kubectl apply --dry-run=client -f - || true
+            echo "::endgroup::"
+          done
+          echo "::endgroup::"
+        continue-on-error: false
+      
+      - name: Validate ArgoCD Applications
+        run: |
+          echo "::group::Validating ArgoCD Applications"
+          find argocd -type f \( -name "*.yaml" -o -name "*.yml" \) | while read file; do
+            echo "Validating $file"
+            kubectl apply --dry-run=client -f "$file" || {
+              echo "::error file=$file::Invalid Kubernetes manifest"
+              exit 1
+            }
+          done
+          echo "::endgroup::"
+        continue-on-error: false
+      
+      - name: Check for Required Values
+        run: |
+          echo "::group::Checking for required values"
+          find helm-charts -name "values.yaml" | while read values_file; do
+            echo "Checking $values_file"
+            if ! yq eval '.image.tag' "$values_file" > /dev/null 2>&1; then
+              echo "::warning file=$values_file::Missing image.tag in values.yaml"
+            fi
+          done
+          echo "::endgroup::"
+        continue-on-error: true
+      
+      - name: Helm Template Test
+        run: |
+          echo "::group::Testing Helm Templates"
+          find helm-charts -type f -name "Chart.yaml" -exec dirname {} \; | sort -u | while read chart_dir; do
+            echo "::group::Testing $chart_dir"
+            if [ -f "$chart_dir/values.yaml" ]; then
+              helm template "$chart_dir" -f "$chart_dir/values.yaml" > /dev/null
+            else
+              helm template "$chart_dir" > /dev/null
+            fi
+            echo "::endgroup::"
+          done
+          echo "::endgroup::"
+        continue-on-error: false
+

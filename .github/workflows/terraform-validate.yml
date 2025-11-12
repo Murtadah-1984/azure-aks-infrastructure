@@ -1,0 +1,88 @@
+name: Terraform Validate
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-validate.yml'
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'terraform/**'
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  TF_VERSION: '1.5.0'
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive
+        continue-on-error: false
+      
+      - name: Terraform Format
+        if: steps.fmt.outcome == 'failure'
+        run: terraform fmt -recursive
+      
+      - name: Validate Terraform Files
+        run: |
+          find terraform -type f -name "*.tf" -exec dirname {} \; | sort -u | while read dir; do
+            echo "::group::Validating $dir"
+            cd "$dir"
+            terraform init -backend=false > /dev/null 2>&1
+            terraform validate -no-color
+            cd - > /dev/null
+            echo "::endgroup::"
+          done
+      
+      - name: Check for Sensitive Data
+        run: |
+          echo "::group::Checking for sensitive data"
+          if grep -r -i "password\|secret\|key\|token" terraform/ --include="*.tf" | grep -v "#.*password\|#.*secret" | grep -v "variable\|var\."; then
+            echo "::warning::Potential sensitive data found in Terraform files"
+            echo "Please review and ensure no secrets are hardcoded"
+            exit 1
+          fi
+          echo "::endgroup::"
+        continue-on-error: true
+      
+      - name: TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+      
+      - name: Run TFLint
+        run: |
+          find terraform -type f -name "*.tf" -exec dirname {} \; | sort -u | while read dir; do
+            echo "::group::TFLint $dir"
+            cd "$dir"
+            tflint --init
+            tflint --format compact
+            cd - > /dev/null
+            echo "::endgroup::"
+          done
+        continue-on-error: true
+

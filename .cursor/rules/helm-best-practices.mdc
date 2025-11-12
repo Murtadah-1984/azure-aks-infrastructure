@@ -1,0 +1,740 @@
+---
+description: Helm chart development best practices and guidelines
+globs: **/Chart.yaml **/values.yaml **/templates/**/*.yaml **/templates/**/*.tpl
+alwaysApply: false
+---
+
+# Helm Best Practices
+
+This document outlines best practices for developing, maintaining, and operating with Helm charts. Follow these guidelines to ensure charts are secure, maintainable, and production-ready.
+
+## Table of Contents
+
+- [General Conventions](#general-conventions)
+- [Chart Structure](#chart-structure)
+- [Values and Parameters](#values-and-parameters)
+- [Templates](#templates)
+- [Labels and Annotations](#labels-and-annotations)
+- [Security](#security)
+- [Testing](#testing)
+- [Documentation](#documentation)
+- [Dependencies](#dependencies)
+- [Upgrading](#upgrading)
+
+---
+
+## General Conventions
+
+### Chart Naming
+
+- **Use lowercase letters and hyphens**: Chart names should be lowercase, with words separated by hyphens.
+- **Keep it short**: Chart names should be concise but descriptive.
+- **No special characters**: Avoid underscores, uppercase letters, or special characters.
+
+```yaml
+# Good
+name: my-awesome-chart
+name: nginx-ingress
+
+# Bad
+name: my_awesome_chart
+name: MyAwesomeChart
+name: my.awesome.chart
+```
+
+### Version Numbers
+
+- Follow [Semantic Versioning](https://semver.org/) (SemVer) for chart versions.
+- Use `MAJOR.MINOR.PATCH` format (e.g., `1.2.3`).
+- Increment:
+  - **MAJOR**: Breaking changes
+  - **MINOR**: New features (backward compatible)
+  - **PATCH**: Bug fixes (backward compatible)
+
+```yaml
+# Chart.yaml
+version: 1.2.3
+appVersion: "2.4.5"
+```
+
+### Formatting and Style
+
+- Use **2 spaces** for indentation (never tabs).
+- Use **quotes** for strings that might be interpreted as numbers or booleans.
+- Use **dashes** (`-`) for list items.
+- Use **colons** (`:`) for key-value pairs.
+
+```yaml
+# Good
+name: "my-app"
+replicas: 3
+tags:
+  - production
+  - web
+
+# Bad
+name: my-app  # Might be interpreted as string, but quotes are safer
+replicas: "3"  # Should be number
+tags: [production, web]  # Flow style less readable
+```
+
+---
+
+## Chart Structure
+
+### Directory Layout
+
+Organize charts with a clear, standard structure:
+
+```
+mychart/
+├── Chart.yaml          # Chart metadata
+├── Chart.lock          # Dependency lock file
+├── values.yaml         # Default configuration values
+├── values.schema.json  # Values schema (optional but recommended)
+├── README.md           # Chart documentation
+├── LICENSE              # License file
+├── crds/               # Custom Resource Definitions
+│   └── crds.yaml
+├── templates/          # Template files
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── ingress.yaml
+│   ├── _helpers.tpl   # Helper templates
+│   └── tests/
+│       └── test-connection.yaml
+└── templates/NOTES.txt # Installation notes
+```
+
+### Chart.yaml Requirements
+
+Include all required fields and recommended metadata:
+
+```yaml
+apiVersion: v2
+name: mychart
+description: A Helm chart for Kubernetes
+type: application
+version: 0.1.0
+appVersion: "1.16.0"
+home: https://github.com/example/mychart
+sources:
+  - https://github.com/example/mychart
+maintainers:
+  - name: John Doe
+    email: john@example.com
+keywords:
+  - web
+  - application
+annotations:
+  category: Application
+```
+
+---
+
+## Values and Parameters
+
+### Values File Organization
+
+- **Use `values.yaml` for defaults**: Provide sensible defaults for all values.
+- **Document all values**: Include comments explaining each parameter.
+- **Group related values**: Organize values logically.
+
+```yaml
+# values.yaml
+# Default values for mychart
+
+# Image configuration
+image:
+  repository: nginx
+  pullPolicy: IfNotPresent
+  tag: "1.21.0"
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+
+# Resource limits
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+```
+
+### Values Schema
+
+Use `values.schema.json` to validate values and provide IDE autocomplete:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "replicas": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Number of replicas"
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
+```
+
+### Declare Values
+
+- **Always declare values used in templates**: Use `values.yaml` to document expected values.
+- **Provide defaults**: Every value should have a default.
+- **Use `.Values` explicitly**: Reference values clearly in templates.
+
+```yaml
+# templates/deployment.yaml
+# Good
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mychart.fullname" . }}
+spec:
+  replicas: {{ .Values.replicas | default 1 }}
+
+# Better - declare in values.yaml
+# values.yaml
+replicas: 1
+
+# templates/deployment.yaml
+spec:
+  replicas: {{ .Values.replicas }}
+```
+
+---
+
+## Templates
+
+### Template Naming
+
+- **Use lowercase and hyphens**: Template files should follow the same naming convention as charts.
+- **Use descriptive names**: File names should clearly indicate the resource type.
+
+```yaml
+# Good
+deployment.yaml
+service.yaml
+ingress.yaml
+configmap.yaml
+
+# Bad
+deploy.yaml
+svc.yaml
+ing.yaml
+```
+
+### Template Organization
+
+- **One resource per file**: Each template file should contain a single Kubernetes resource.
+- **Use `_helpers.tpl`**: Store reusable template helpers in `_helpers.tpl`.
+- **Group related resources**: Use subdirectories for complex charts.
+
+```
+templates/
+├── _helpers.tpl
+├── deployment.yaml
+├── service.yaml
+├── ingress.yaml
+└── configmap.yaml
+```
+
+### Template Functions
+
+- **Use built-in functions**: Leverage Helm's built-in template functions.
+- **Use `include` for helpers**: Use `include` to call helper templates.
+- **Avoid complex logic**: Keep templates simple; move complex logic to helpers.
+
+```yaml
+# Good - using include
+metadata:
+  name: {{ include "mychart.fullname" . }}
+  labels:
+    {{- include "mychart.labels" . | nindent 4 }}
+
+# Good - using default
+spec:
+  replicas: {{ .Values.replicas | default 1 }}
+
+# Bad - complex inline logic
+metadata:
+  name: {{ .Release.Name }}-{{ .Chart.Name }}-{{ .Values.environment }}
+```
+
+### Control Structures
+
+- **Use whitespace control**: Use `{{-` and `-}}` to trim whitespace.
+- **Indent properly**: Maintain proper YAML indentation.
+- **Use `with` and `range` carefully**: Understand their scoping behavior.
+
+```yaml
+# Good - whitespace control
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+{{- end }}
+
+# Good - proper indentation
+{{- with .Values.resources }}
+resources:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+
+# Bad - no whitespace control
+{{ if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+{{ end }}
+```
+
+### Helper Templates
+
+Create reusable helper templates in `_helpers.tpl`:
+
+```yaml
+# templates/_helpers.tpl
+{{/*
+Expand the name of the chart.
+*/}}
+{{- define "mychart.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Create a default fully qualified app name.
+*/}}
+{{- define "mychart.fullname" -}}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $name := default .Chart.Name .Values.nameOverride }}
+{{- if contains $name .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Common labels
+*/}}
+{{- define "mychart.labels" -}}
+helm.sh/chart: {{ include "mychart.chart" . }}
+{{ include "mychart.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+```
+
+---
+
+## Labels and Annotations
+
+### Standard Labels
+
+Always include standard Kubernetes labels:
+
+```yaml
+# templates/_helpers.tpl
+{{- define "mychart.labels" -}}
+helm.sh/chart: {{ include "mychart.chart" . }}
+{{ include "mychart.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "mychart.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "mychart.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+```
+
+### Label Usage
+
+- **Apply labels consistently**: Use the same labels across all resources.
+- **Use selector labels**: Include selector labels for resources that need to be selected.
+- **Keep labels short**: Labels have a 63-character limit.
+
+```yaml
+# templates/deployment.yaml
+metadata:
+  labels:
+    {{- include "mychart.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "mychart.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mychart.selectorLabels" . | nindent 8 }}
+```
+
+---
+
+## Security
+
+### Image Security
+
+- **Use specific image tags**: Avoid `latest` tag; use specific versions or digests.
+- **Enable image pull secrets**: Support image pull secrets for private registries.
+- **Scan images**: Regularly scan images for vulnerabilities.
+
+```yaml
+# values.yaml
+image:
+  repository: nginx
+  tag: "1.21.0"  # Specific version, not "latest"
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+```
+
+### Secret Management
+
+- **Never hardcode secrets**: Use Kubernetes Secrets or external secret management.
+- **Use `b64enc` for encoding**: Encode secret values properly.
+- **Support external secrets**: Allow injection of secrets from external sources.
+
+```yaml
+# templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "mychart.fullname" . }}
+type: Opaque
+data:
+  password: {{ .Values.password | b64enc | quote }}
+
+# Better - use external secrets
+# Allow values to reference existing secrets
+```
+
+### RBAC
+
+- **Follow principle of least privilege**: Create minimal RBAC permissions.
+- **Use separate ServiceAccounts**: Don't use default service account.
+- **Document required permissions**: Clearly document why each permission is needed.
+
+```yaml
+# templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "mychart.fullname" . }}
+  labels:
+    {{- include "mychart.labels" . | nindent 4 }}
+automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+```
+
+### Pod Security
+
+- **Set security contexts**: Configure security contexts for pods and containers.
+- **Disable privilege escalation**: Set `allowPrivilegeEscalation: false`.
+- **Use read-only root filesystem**: When possible, use read-only root filesystem.
+
+```yaml
+# templates/deployment.yaml
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: {{ .Chart.Name }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+```
+
+---
+
+## Testing
+
+### Chart Testing
+
+- **Use `helm test`**: Create test pods to verify chart functionality.
+- **Test different scenarios**: Test with different value combinations.
+- **Validate templates**: Use `helm template` to validate template rendering.
+
+```yaml
+# templates/tests/test-connection.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "mychart.fullname" . }}-test-connection"
+  labels:
+    {{- include "mychart.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+  - name: wget
+    image: busybox
+    command: ['wget']
+    args: ['{{ include "mychart.fullname" . }}:{{ .Values.service.port }}']
+  restartPolicy: Never
+```
+
+### Linting
+
+- **Use `helm lint`**: Always lint charts before packaging.
+- **Fix all warnings**: Address lint warnings and errors.
+- **Use CI/CD**: Integrate linting into CI/CD pipelines.
+
+```bash
+# Lint chart
+helm lint ./mychart
+
+# Dry-run install
+helm install myrelease ./mychart --dry-run --debug
+
+# Template validation
+helm template myrelease ./mychart | kubeval
+```
+
+---
+
+## Documentation
+
+### README.md
+
+Every chart must include a comprehensive README:
+
+```markdown
+# MyChart
+
+A Helm chart for [application description]
+
+## Introduction
+
+Brief description of what the chart does.
+
+## Prerequisites
+
+- Kubernetes 1.19+
+- Helm 3.0+
+
+## Installing the Chart
+
+```bash
+helm install myrelease ./mychart
+```
+
+## Uninstalling the Chart
+
+```bash
+helm uninstall myrelease
+```
+
+## Configuration
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `replicas` | Number of replicas | `1` |
+| `image.repository` | Image repository | `nginx` |
+| `image.tag` | Image tag | `1.21.0` |
+
+## Values
+
+Document all configurable values with examples.
+```
+
+### NOTES.txt
+
+Provide helpful post-installation information:
+
+```yaml
+# templates/NOTES.txt
+1. Get the application URL by running these commands:
+{{- if .Values.ingress.enabled }}
+{{- range $host := .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
+  {{- end }}
+{{- end }}
+{{- else if contains "NodePort" .Values.service.type }}
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "mychart.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+{{- end }}
+```
+
+---
+
+## Dependencies
+
+### Managing Dependencies
+
+- **Use Chart.yaml dependencies**: Declare dependencies in `Chart.yaml`.
+- **Lock dependencies**: Use `Chart.lock` to lock dependency versions.
+- **Document dependencies**: Explain why each dependency is needed.
+
+```yaml
+# Chart.yaml
+dependencies:
+  - name: postgresql
+    version: "10.0.0"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
+  - name: redis
+    version: "15.0.0"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: redis.enabled
+```
+
+### Dependency Management
+
+```bash
+# Update dependencies
+helm dependency update
+
+# Build chart with dependencies
+helm dependency build
+
+# Verify dependencies
+helm dependency list
+```
+
+---
+
+## Upgrading
+
+### Upgrade Considerations
+
+- **Test upgrades**: Always test upgrades in non-production environments.
+- **Review breaking changes**: Check release notes for breaking changes.
+- **Backup data**: Backup persistent data before upgrades.
+- **Use `--dry-run`**: Test upgrades with `--dry-run` first.
+
+```bash
+# Dry-run upgrade
+helm upgrade myrelease ./mychart --dry-run --debug
+
+# Perform upgrade
+helm upgrade myrelease ./mychart
+
+# Rollback if needed
+helm rollback myrelease [revision]
+```
+
+### Version Compatibility
+
+- **Document Kubernetes version requirements**: Specify minimum Kubernetes version.
+- **Test with multiple K8s versions**: Ensure compatibility across versions.
+- **Use API version detection**: Use template functions to detect API versions.
+
+```yaml
+# Check for API version
+{{- if .Capabilities.APIVersions.Has "networking.k8s.io/v1/Ingress" }}
+apiVersion: networking.k8s.io/v1
+{{- else }}
+apiVersion: extensions/v1beta1
+{{- end }}
+```
+
+---
+
+## Additional Best Practices
+
+### Resource Management
+
+- **Set resource requests and limits**: Always define resource requests and limits.
+- **Use HPA**: Support Horizontal Pod Autoscaling when appropriate.
+- **Configure liveness and readiness probes**: Include health checks.
+
+```yaml
+# templates/deployment.yaml
+spec:
+  template:
+    spec:
+      containers:
+      - name: {{ .Chart.Name }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+```
+
+### Configuration Management
+
+- **Use ConfigMaps for configuration**: Store configuration in ConfigMaps.
+- **Support external configuration**: Allow mounting external config files.
+- **Use init containers**: Use init containers for setup tasks when needed.
+
+### Monitoring and Observability
+
+- **Add Prometheus annotations**: Include Prometheus scrape annotations.
+- **Support distributed tracing**: Add tracing configuration when applicable.
+- **Include logging configuration**: Configure structured logging.
+
+```yaml
+# templates/deployment.yaml
+metadata:
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+```
+
+---
+
+## Quick Reference Checklist
+
+- [ ] Chart follows naming conventions
+- [ ] All values are documented in `values.yaml`
+- [ ] `values.schema.json` is provided
+- [ ] Standard labels are used consistently
+- [ ] Security contexts are configured
+- [ ] Resource limits are set
+- [ ] Health checks are configured
+- [ ] README.md is comprehensive
+- [ ] NOTES.txt provides useful information
+- [ ] Chart passes `helm lint`
+- [ ] Tests are included
+- [ ] Dependencies are declared and locked
+- [ ] Images use specific tags (not `latest`)
+- [ ] Secrets are managed securely
+- [ ] RBAC follows least privilege principle
+
+---
+
+## References
+
+- [Helm Official Documentation](https://helm.sh/docs/)
+- [Kubernetes Best Practices](https://kubernetes.io/docs/concepts/)
+- [Semantic Versioning](https://semver.org/)
+- [YAML Best Practices](https://yaml.org/spec/)

@@ -1,0 +1,75 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istio-istiod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: infrastructure
+  source:
+    chart: istiod
+    repoURL: https://istio-release.storage.googleapis.com/charts
+    targetRevision: 1.20.1
+    helm:
+      releaseName: istiod
+      values: |
+        global:
+          proxy:
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                cpu: 2000m
+                memory: 1024Mi
+        
+        pilot:
+          autoscaleEnabled: true
+          autoscaleMin: 2
+          autoscaleMax: 5
+          replicaCount: 2
+          
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2048Mi
+            limits:
+              cpu: 1000m
+              memory: 4096Mi
+          
+          # Enable Prometheus metrics
+          env:
+            PILOT_ENABLE_PROTOCOL_SNIFFING_FOR_OUTBOUND: "true"
+            PILOT_ENABLE_PROTOCOL_SNIFFING_FOR_INBOUND: "true"
+        
+        meshConfig:
+          accessLogFile: /dev/stdout
+          accessLogEncoding: JSON
+          
+          defaultConfig:
+            tracing:
+              zipkin:
+                address: jaeger-collector.observability:9411
+          
+          enablePrometheusMerge: true
+          
+          # Integrate with existing Prometheus
+          extensionProviders:
+            - name: prometheus
+              prometheus: {}
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-system
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s

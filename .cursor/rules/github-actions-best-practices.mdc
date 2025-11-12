@@ -1,0 +1,1331 @@
+---
+description: GitHub Actions workflow best practices and guidelines for secure, efficient CI/CD pipelines
+globs: **/.github/workflows/**/*.yml **/.github/workflows/**/*.yaml **/.github/actions/**/*
+alwaysApply: false
+---
+
+# GitHub Actions Best Practices
+
+This document outlines best practices for creating secure, efficient, and maintainable GitHub Actions workflows. Follow these guidelines to ensure your CI/CD pipelines are production-ready and follow GitHub's recommended practices.
+
+## Table of Contents
+
+- [Workflow Structure](#workflow-structure)
+- [Security Best Practices](#security-best-practices)
+- [Performance Optimization](#performance-optimization)
+- [Reusability and DRY](#reusability-and-dry)
+- [Error Handling and Debugging](#error-handling-and-debugging)
+- [Secrets Management](#secrets-management)
+- [Caching Strategies](#caching-strategies)
+- [Matrix Strategies](#matrix-strategies)
+- [Environment Variables](#environment-variables)
+- [Job Dependencies](#job-dependencies)
+- [Conditional Execution](#conditional-execution)
+- [Artifacts and Logs](#artifacts-and-logs)
+- [Workflow Triggers](#workflow-triggers)
+- [Runner Selection](#runner-selection)
+- [Quick Reference Checklist](#quick-reference-checklist)
+
+---
+
+## Workflow Structure
+
+### Basic Workflow Structure
+
+A well-structured workflow includes:
+- Clear name and description
+- Appropriate triggers
+- Environment variables
+- Job definitions with clear names
+- Proper error handling
+
+```yaml
+# Good - Well-structured workflow
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Run tests
+        run: npm test
+
+  build:
+    name: Build Application
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: npm run build
+```
+
+### Workflow Naming
+
+- **Use descriptive names**: Clearly indicate what the workflow does
+- **Follow naming conventions**: Use kebab-case
+- **Include environment**: If environment-specific, include in name
+
+```yaml
+# Good
+name: CI Pipeline
+name: Deploy to Production
+name: Security Scan
+
+# Bad
+name: workflow
+name: test1
+name: My Workflow
+```
+
+---
+
+## Security Best Practices
+
+### Pin Actions to Full Length Commit SHA
+
+**Always pin actions to full length commit SHA** for maximum security:
+
+```yaml
+# Good - Pinned to full SHA
+- uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3
+
+# Good - Pinned to major version (acceptable for trusted actions)
+- uses: actions/checkout@v4
+
+# Bad - Using branch or tag
+- uses: actions/checkout@main
+- uses: actions/checkout@v4.1.0
+```
+
+### Use OIDC Instead of Long-Lived Credentials
+
+**Use OpenID Connect (OIDC) for cloud provider authentication**:
+
+```yaml
+# Good - Using OIDC
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/github-actions
+          aws-region: us-east-1
+
+# Bad - Using long-lived credentials
+- name: Configure AWS credentials
+  env:
+    AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+    AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+```
+
+### Use Secrets for Sensitive Data
+
+**Never hardcode secrets or sensitive data**:
+
+```yaml
+# Good - Using secrets
+- name: Deploy
+  env:
+    API_KEY: ${{ secrets.API_KEY }}
+    DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  run: ./deploy.sh
+
+# Bad - Hardcoded values
+- name: Deploy
+  env:
+    API_KEY: "sk-1234567890abcdef"
+    DATABASE_URL: "postgres://user:password@host:5432/db"
+  run: ./deploy.sh
+```
+
+### Limit Permissions
+
+**Use minimal required permissions**:
+
+```yaml
+# Good - Minimal permissions
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # Override for specific job
+    steps:
+      - uses: actions/checkout@v4
+
+# Bad - Excessive permissions
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  packages: write
+  deployments: write
+  # ... all permissions
+```
+
+### Avoid Script Injection
+
+**Use environment variables and proper escaping**:
+
+```yaml
+# Good - Safe variable usage
+- name: Run script
+  env:
+    BRANCH_NAME: ${{ github.ref_name }}
+  run: |
+    echo "Building branch: $BRANCH_NAME"
+    ./build.sh "$BRANCH_NAME"
+
+# Bad - Potential injection
+- name: Run script
+  run: |
+    echo "Building branch: ${{ github.ref }}"
+    ./build.sh ${{ github.ref }}
+```
+
+### Use Dependabot for Action Updates
+
+**Enable Dependabot to keep actions updated**:
+
+```yaml
+# .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+```
+
+---
+
+## Performance Optimization
+
+### Use Matrix Strategies for Parallel Jobs
+
+**Run jobs in parallel using matrix strategies**:
+
+```yaml
+# Good - Parallel execution with matrix
+jobs:
+  test:
+    name: Test on ${{ matrix.os }} - Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [16, 18, 20]
+      fail-fast: false
+      max-parallel: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+
+# Bad - Sequential execution
+jobs:
+  test-ubuntu:
+    runs-on: ubuntu-latest
+    # ...
+  test-windows:
+    runs-on: windows-latest
+    needs: test-ubuntu
+    # ...
+  test-macos:
+    runs-on: macos-latest
+    needs: test-windows
+    # ...
+```
+
+### Implement Caching
+
+**Cache dependencies and build artifacts**:
+
+```yaml
+# Good - Using cache action
+- name: Cache dependencies
+  uses: actions/cache@v4
+  with:
+    path: |
+      ~/.npm
+      node_modules
+    key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+    restore-keys: |
+      ${{ runner.os }}-node-
+
+- name: Install dependencies
+  run: npm ci
+
+# Good - Using built-in caching
+- name: Setup Node.js
+  uses: actions/setup-node@v4
+  with:
+    node-version: '18'
+    cache: 'npm'
+
+# Bad - No caching
+- name: Install dependencies
+  run: npm install  # Downloads every time
+```
+
+### Use Appropriate Runners
+
+**Choose the right runner for your workload**:
+
+```yaml
+# Good - Using appropriate runner
+jobs:
+  test:
+    runs-on: ubuntu-latest  # Fast, free for public repos
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm test
+
+  build:
+    runs-on: ubuntu-latest  # Sufficient for most builds
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm run build
+
+  deploy:
+    runs-on: self-hosted  # Custom runner for deployment
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy.sh
+
+# Bad - Using expensive runners unnecessarily
+jobs:
+  test:
+    runs-on: macos-latest  # More expensive, slower startup
+    steps:
+      - run: echo "Simple test"
+```
+
+### Optimize Job Dependencies
+
+**Structure jobs to minimize wait time**:
+
+```yaml
+# Good - Parallel independent jobs
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm run lint
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm test
+
+  build:
+    needs: [lint, test]  # Only wait for both
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm run build
+
+# Bad - Sequential when parallel is possible
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    # ...
+  test:
+    needs: lint  # Unnecessary dependency
+    runs-on: ubuntu-latest
+    # ...
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    # ...
+```
+
+### Use Workflow Concurrency
+
+**Limit concurrent workflow runs**:
+
+```yaml
+# Good - Concurrency control
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true  # Cancel previous runs
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy.sh
+```
+
+---
+
+## Reusability and DRY
+
+### Use Reusable Workflows
+
+**Create reusable workflows for common tasks**:
+
+```yaml
+# .github/workflows/reusable-test.yml
+name: Reusable Test Workflow
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: true
+        type: string
+      test-command:
+        required: false
+        type: string
+        default: 'npm test'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+      - run: ${{ inputs.test-command }}
+
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    uses: ./.github/workflows/reusable-test.yml
+    with:
+      node-version: '18'
+      test-command: 'npm run test:ci'
+```
+
+### Use Composite Actions
+
+**Create composite actions for reusable steps**:
+
+```yaml
+# .github/actions/setup-and-test/action.yml
+name: 'Setup and Test'
+description: 'Setup environment and run tests'
+
+inputs:
+  node-version:
+    description: 'Node.js version'
+    required: true
+    default: '18'
+  test-command:
+    description: 'Test command to run'
+    required: false
+    default: 'npm test'
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+    - shell: bash
+      run: ${{ inputs.test-command }}
+
+# Usage in workflow
+- uses: ./.github/actions/setup-and-test
+  with:
+    node-version: '20'
+    test-command: 'npm run test:unit'
+```
+
+### Extract Common Steps
+
+**Use step reusability to avoid duplication**:
+
+```yaml
+# Good - Reusable steps
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+
+# Better - Using composite action
+- uses: ./.github/actions/setup-node
+  with:
+    node-version: '18'
+```
+
+---
+
+## Error Handling and Debugging
+
+### Use Conditional Steps
+
+**Handle errors gracefully with conditional steps**:
+
+```yaml
+# Good - Conditional error handling
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        id: test
+        continue-on-error: true
+        run: npm test
+      - name: Upload test results
+        if: steps.test.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+      - name: Fail if tests failed
+        if: steps.test.outcome == 'failure'
+        run: exit 1
+```
+
+### Enable Debug Logging
+
+**Use debug logging for troubleshooting**:
+
+```yaml
+# Good - Debug logging
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable debug logging
+        run: |
+          echo "::debug::This is a debug message"
+          echo "::warning::This is a warning"
+          echo "::error::This is an error"
+      
+      - name: Debug with secrets masking
+        env:
+          DEBUG: true
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          echo "::add-mask::${{ secrets.SECRET_KEY }}"
+          echo "Debug mode: $DEBUG"
+```
+
+### Use Job Status Checks
+
+**Check job status and handle accordingly**:
+
+```yaml
+# Good - Status checking
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm test
+
+  deploy:
+    needs: test
+    if: success()  # Only deploy if test succeeds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy.sh
+
+  notify:
+    needs: [test, deploy]
+    if: always()  # Always run notification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify
+        run: |
+          if [ "${{ needs.test.result }}" == "success" ] && [ "${{ needs.deploy.result }}" == "success" ]; then
+            echo "All jobs succeeded"
+          else
+            echo "Some jobs failed"
+          fi
+```
+
+### Proper Error Messages
+
+**Provide clear error messages**:
+
+```yaml
+# Good - Clear error messages
+- name: Validate configuration
+  run: |
+    if [ ! -f "config.json" ]; then
+      echo "::error::Configuration file not found"
+      echo "::error file=config.json,title=Missing config::Please create config.json"
+      exit 1
+    fi
+```
+
+---
+
+## Secrets Management
+
+### Use Repository Secrets
+
+**Store secrets in repository settings**:
+
+```yaml
+# Good - Using repository secrets
+- name: Deploy
+  env:
+    API_KEY: ${{ secrets.API_KEY }}
+    DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  run: ./deploy.sh
+
+# Bad - Hardcoded or in workflow file
+- name: Deploy
+  env:
+    API_KEY: "sk-1234567890"
+  run: ./deploy.sh
+```
+
+### Use Environment Secrets
+
+**Use environment-specific secrets for different environments**:
+
+```yaml
+# Good - Environment-specific secrets
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Deploy to staging
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
+        run: ./deploy.sh staging
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy to production
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
+        run: ./deploy.sh production
+```
+
+### Mask Secrets in Logs
+
+**Secrets are automatically masked, but be careful with output**:
+
+```yaml
+# Good - Secrets are automatically masked
+- name: Use secret
+  env:
+    SECRET: ${{ secrets.MY_SECRET }}
+  run: |
+    echo "Using secret..."  # Secret value won't appear in logs
+    ./script.sh "$SECRET"
+
+# Bad - Exposing secret in output
+- name: Use secret
+  env:
+    SECRET: ${{ secrets.MY_SECRET }}
+  run: |
+    echo "Secret is: $SECRET"  # Will be masked, but avoid this pattern
+    echo "$SECRET" > file.txt  # File content might be exposed
+```
+
+### Rotate Secrets Regularly
+
+**Implement secret rotation policies**:
+
+```yaml
+# Document secret rotation in workflow comments
+# Secrets should be rotated every 90 days
+# Update secrets in repository settings
+```
+
+---
+
+## Caching Strategies
+
+### Cache Dependencies
+
+**Cache package manager dependencies**:
+
+```yaml
+# Good - Caching npm dependencies
+- name: Cache npm dependencies
+  uses: actions/cache@v4
+  with:
+    path: ~/.npm
+    key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+    restore-keys: |
+      ${{ runner.os }}-node-
+
+- name: Install dependencies
+  run: npm ci
+
+# Good - Using setup-node built-in cache
+- name: Setup Node.js
+  uses: actions/setup-node@v4
+  with:
+    node-version: '18'
+    cache: 'npm'
+```
+
+### Cache Build Artifacts
+
+**Cache build outputs when appropriate**:
+
+```yaml
+# Good - Caching build artifacts
+- name: Cache build
+  uses: actions/cache@v4
+  with:
+    path: dist/
+    key: ${{ runner.os }}-build-${{ github.sha }}
+    restore-keys: |
+      ${{ runner.os }}-build-
+
+- name: Build
+  run: npm run build
+```
+
+### Cache Docker Layers
+
+**Cache Docker image layers**:
+
+```yaml
+# Good - Caching Docker layers
+- name: Set up Docker Buildx
+  uses: docker/setup-buildx-action@v3
+
+- name: Build Docker image
+  uses: docker/build-push-action@v5
+  with:
+    context: .
+    push: false
+    cache-from: type=gha
+    cache-to: type=gha,mode=max
+```
+
+---
+
+## Matrix Strategies
+
+### Use Matrix for Multiple Configurations
+
+**Test across multiple configurations**:
+
+```yaml
+# Good - Comprehensive matrix
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: [16, 18, 20]
+        include:
+          - os: ubuntu-latest
+            node-version: 22
+            experimental: true
+        exclude:
+          - os: windows-latest
+            node-version: 16
+      fail-fast: false
+      max-parallel: 5
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm test
+```
+
+### Optimize Matrix Size
+
+**Balance coverage with execution time**:
+
+```yaml
+# Good - Focused matrix
+jobs:
+  test:
+    strategy:
+      matrix:
+        node-version: [18, 20]  # Test current and LTS
+        os: [ubuntu-latest]  # Primary OS
+      fail-fast: true  # Stop on first failure
+    runs-on: ${{ matrix.os }}
+    # ...
+
+# Bad - Too many combinations
+jobs:
+  test:
+    strategy:
+      matrix:
+        node-version: [14, 16, 18, 19, 20, 21, 22]
+        os: [ubuntu-18.04, ubuntu-20.04, ubuntu-22.04, windows-2019, windows-2022, macos-11, macos-12, macos-13]
+        # 56 combinations!
+```
+
+---
+
+## Environment Variables
+
+### Use Workflow-Level Environment Variables
+
+**Define common environment variables at workflow level**:
+
+```yaml
+# Good - Workflow-level env vars
+name: CI
+
+env:
+  NODE_ENV: production
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      TEST_ENV: test  # Job-specific override
+    steps:
+      - run: echo ${{ env.NODE_ENV }}
+```
+
+### Use Secrets for Sensitive Variables
+
+**Never put secrets in environment variables directly**:
+
+```yaml
+# Good - Using secrets
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      API_KEY: ${{ secrets.API_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - run: ./deploy.sh
+
+# Bad - Hardcoded values
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      API_KEY: "sk-1234567890"
+      DATABASE_URL: "postgres://user:pass@host/db"
+    steps:
+      - run: ./deploy.sh
+```
+
+---
+
+## Job Dependencies
+
+### Structure Job Dependencies
+
+**Create efficient job dependency chains**:
+
+```yaml
+# Good - Parallel then sequential
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm run lint
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm test
+
+  build:
+    needs: [lint, test]  # Wait for both
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm run build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy.sh
+```
+
+### Use Job Outputs
+
+**Pass data between jobs**:
+
+```yaml
+# Good - Using job outputs
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      image-tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+      - id: tag
+        run: echo "tag=app:${{ steps.version.outputs.version }}" >> $GITHUB_OUTPUT
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        run: |
+          echo "Deploying version ${{ needs.build.outputs.version }}"
+          docker push ${{ needs.build.outputs.image-tag }}
+```
+
+---
+
+## Conditional Execution
+
+### Use Conditions Effectively
+
+**Control workflow and job execution with conditions**:
+
+```yaml
+# Good - Conditional execution
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm test
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy.sh
+
+  notify:
+    if: always()
+    needs: [test, deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify
+        run: ./notify.sh
+```
+
+### Skip Workflows When Appropriate
+
+**Use skip conditions to avoid unnecessary runs**:
+
+```yaml
+# Good - Skip on documentation changes
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm test
+```
+
+---
+
+## Artifacts and Logs
+
+### Upload Artifacts
+
+**Save build artifacts for later use**:
+
+```yaml
+# Good - Uploading artifacts
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: npm run build
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Deploy
+        run: ./deploy.sh
+```
+
+### Organize Logs
+
+**Use proper log organization and annotations**:
+
+```yaml
+# Good - Organized logging
+- name: Run tests
+  run: |
+    echo "::group::Running unit tests"
+    npm run test:unit
+    echo "::endgroup::"
+    
+    echo "::group::Running integration tests"
+    npm run test:integration
+    echo "::endgroup::"
+    
+    echo "::notice::All tests passed"
+```
+
+---
+
+## Workflow Triggers
+
+### Use Appropriate Triggers
+
+**Choose triggers that match your needs**:
+
+```yaml
+# Good - Specific triggers
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'src/**'
+      - 'package.json'
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly
+
+# Bad - Too broad triggers
+on:
+  push:  # Triggers on every push to any branch
+  pull_request:  # Triggers on all PR events
+```
+
+### Use Path Filters
+
+**Optimize workflows with path filters**:
+
+```yaml
+# Good - Path-based triggers
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+```
+
+---
+
+## Runner Selection
+
+### Choose Appropriate Runners
+
+**Select runners based on workload**:
+
+```yaml
+# Good - Appropriate runner selection
+jobs:
+  test:
+    runs-on: ubuntu-latest  # Fast, free for public repos
+    steps:
+      - run: npm test
+
+  build-docker:
+    runs-on: ubuntu-latest  # Good for Docker builds
+    steps:
+      - run: docker build .
+
+  deploy:
+    runs-on: self-hosted  # Custom runner for deployment
+    steps:
+      - run: ./deploy.sh
+
+# Bad - Using expensive runners unnecessarily
+jobs:
+  simple-test:
+    runs-on: macos-latest  # More expensive, slower
+    steps:
+      - run: echo "Hello"
+```
+
+### Use Self-Hosted Runners Carefully
+
+**Secure self-hosted runners properly**:
+
+```yaml
+# Good - Self-hosted runner with labels
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, production]
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy.sh
+
+# Security considerations:
+# - Use dedicated runners for sensitive workloads
+# - Regularly update runner software
+# - Use runner groups for access control
+# - Monitor runner activity
+```
+
+---
+
+## Quick Reference Checklist
+
+### Security Checklist
+- [ ] All actions pinned to full SHA or major version
+- [ ] OIDC used instead of long-lived credentials
+- [ ] Secrets stored in repository/environment secrets
+- [ ] Minimal permissions set (principle of least privilege)
+- [ ] No hardcoded secrets or sensitive data
+- [ ] Dependabot enabled for action updates
+- [ ] Script injection prevented (proper escaping)
+
+### Performance Checklist
+- [ ] Matrix strategies used for parallel execution
+- [ ] Caching implemented for dependencies
+- [ ] Appropriate runners selected
+- [ ] Job dependencies optimized (parallel when possible)
+- [ ] Workflow concurrency limits set
+- [ ] Path filters used to avoid unnecessary runs
+
+### Reusability Checklist
+- [ ] Reusable workflows created for common tasks
+- [ ] Composite actions used for repeated steps
+- [ ] Common steps extracted and reused
+- [ ] Workflow templates documented
+
+### Quality Checklist
+- [ ] Clear workflow and job names
+- [ ] Proper error handling and conditional execution
+- [ ] Debug logging enabled where needed
+- [ ] Artifacts properly uploaded/downloaded
+- [ ] Job outputs used for data passing
+- [ ] Appropriate triggers configured
+
+### Maintenance Checklist
+- [ ] Workflows documented
+- [ ] Changelog maintained
+- [ ] Regular review of workflow performance
+- [ ] Secrets rotated regularly
+- [ ] Actions kept up to date
+- [ ] Unused workflows removed
+
+---
+
+## Common Anti-Patterns to Avoid
+
+```yaml
+# ❌ BAD - Unpinned actions
+- uses: actions/checkout@main
+- uses: actions/setup-node@latest
+
+# ✅ GOOD - Pinned actions
+- uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3
+- uses: actions/setup-node@v4
+
+# ❌ BAD - Hardcoded secrets
+env:
+  API_KEY: "sk-1234567890"
+
+# ✅ GOOD - Using secrets
+env:
+  API_KEY: ${{ secrets.API_KEY }}
+
+# ❌ BAD - Excessive permissions
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  packages: write
+  deployments: write
+
+# ✅ GOOD - Minimal permissions
+permissions:
+  contents: read
+  pull-requests: write
+
+# ❌ BAD - No caching
+- run: npm install  # Downloads every time
+
+# ✅ GOOD - Using cache
+- uses: actions/cache@v4
+  with:
+    path: ~/.npm
+    key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+- run: npm ci
+
+# ❌ BAD - Sequential when parallel possible
+jobs:
+  lint:
+    # ...
+  test:
+    needs: lint  # Unnecessary
+    # ...
+  build:
+    needs: test
+    # ...
+
+# ✅ GOOD - Parallel then sequential
+jobs:
+  lint:
+    # ...
+  test:
+    # ... (parallel with lint)
+  build:
+    needs: [lint, test]  # Wait for both
+    # ...
+```
+
+---
+
+## Tools and Resources
+
+### Recommended Actions
+- **actions/checkout@v4**: Checkout repository code
+- **actions/setup-node@v4**: Setup Node.js with caching
+- **actions/cache@v4**: Cache dependencies and artifacts
+- **actions/upload-artifact@v4**: Upload build artifacts
+- **actions/download-artifact@v4**: Download artifacts
+- **actions/setup-python@v5**: Setup Python environment
+- **docker/setup-buildx-action@v3**: Docker Buildx setup
+- **docker/build-push-action@v5**: Build and push Docker images
+
+### Documentation Resources
+- [GitHub Actions Documentation](https://docs.github.com/en/actions)
+- [GitHub Actions Security Best Practices](https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions)
+- [GitHub Actions Workflow Syntax](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions)
+- [GitHub Actions Reusable Workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
+- [GitHub Actions Composite Actions](https://docs.github.com/en/actions/creating-actions/creating-a-composite-action)
+
+---
+
+## References
+
+- [GitHub Actions Documentation](https://docs.github.com/en/actions)
+- [Security Hardening for GitHub Actions](https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions)
+- [Workflow Syntax for GitHub Actions](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions)
+- [Reusing Workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
+- [Creating Composite Actions](https://docs.github.com/en/actions/creating-actions/creating-a-composite-action)
+- [Using Environments for Deployment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment)
+
+---
+
+## Summary
+
+Effective GitHub Actions workflows:
+- **Are secure**: Pinned actions, OIDC, minimal permissions, proper secret management
+- **Are performant**: Caching, parallel execution, appropriate runners, optimized dependencies
+- **Are maintainable**: Reusable workflows, composite actions, clear structure, documentation
+- **Handle errors**: Conditional execution, proper error messages, status checks
+- **Are efficient**: Matrix strategies, concurrency limits, path filters, appropriate triggers
+
+Remember: Well-designed workflows save time, reduce costs, improve security, and make your CI/CD pipeline more reliable and maintainable.
