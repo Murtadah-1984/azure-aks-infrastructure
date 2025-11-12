@@ -11,8 +11,9 @@ This rule ensures that all code changes are properly documented, committed, and 
 
 **Every code change should:**
 1. ✅ Update relevant documentation if the change affects functionality, configuration, or usage
-2. ✅ Be committed with a clear, descriptive commit message
-3. ✅ Be pushed to GitHub to maintain version control and enable collaboration
+2. ✅ Update project structure documentation (`.cursor/rules/project-structure.mdc`) if directory structure changes
+3. ✅ Be committed with a clear, descriptive commit message
+4. ✅ Be pushed to GitHub to maintain version control and enable collaboration
 
 ---
 
@@ -35,6 +36,7 @@ This rule ensures that all code changes are properly documented, committed, and 
 **Documentation files to consider:**
 - `README.md` - Main project documentation
 - `docs/**/*.md` - Specific documentation files
+- `.cursor/rules/project-structure.mdc` - **ALWAYS update if directory structure changes**
 - `.cursor/rules/*.mdc` - Cursor rules (if patterns change)
 - `argocd/applications/**/*.yaml` - Application annotations (description field)
 - Inline code comments for complex logic
@@ -44,10 +46,161 @@ This rule ensures that all code changes are properly documented, committed, and 
 Before committing, verify:
 - [ ] README.md updated if features/config changed
 - [ ] Relevant docs/ files updated
+- [ ] **Project structure (`project-structure.mdc`) updated if directories/files added/removed/renamed**
 - [ ] ArgoCD application descriptions updated (if applicable)
 - [ ] Code comments added for complex changes
 - [ ] Examples updated if API/usage changed
 - [ ] Changelog or version notes updated (if maintained)
+
+---
+
+## 1.5. Project Structure Documentation Update
+
+### When to Update Project Structure
+
+**ALWAYS update `.cursor/rules/project-structure.mdc` when:**
+- ✅ Adding new directories or subdirectories
+- ✅ Removing directories or files
+- ✅ Renaming directories or files
+- ✅ Adding new file types or patterns
+- ✅ Changing directory organization
+- ✅ Adding new root-level files
+- ✅ Modifying directory purposes or descriptions
+
+### How to Capture Project Structure
+
+**Step 1: Capture Current Directory Structure**
+
+Use these commands to capture the current state:
+
+```bash
+# Capture full directory tree (excluding .git and node_modules)
+tree -I '.git|node_modules|__pycache__|*.pyc' -L 3 > /tmp/project-structure.txt
+
+# Or use find for more control
+find . -type d -not -path '*/\.*' -not -path '*/node_modules/*' | head -50
+
+# Or use ls for specific directories
+ls -R argocd/ terraform/ docs/ scripts/ 2>/dev/null | grep -v "^$"
+```
+
+**Step 2: Update project-structure.mdc**
+
+Update the following sections in `.cursor/rules/project-structure.mdc`:
+
+1. **Root Directory Structure** - Update the tree diagram
+2. **Directory Details** - Add/update directory descriptions
+3. **File Type Conventions** - Add new file types if needed
+4. **Quick Reference** - Update tables with new locations
+5. **Adding New Components** - Add patterns for new component types
+
+**Step 3: Maintain Consistency**
+
+- Keep directory tree diagrams accurate
+- Update all references to moved/renamed directories
+- Ensure examples match current structure
+- Update "Where to Find Things" table
+- Update "Common Tasks" table
+
+### Automated Project Structure Capture
+
+**For AI Assistants (Cursor/Claude):**
+
+When directory structure changes, automatically:
+
+1. **List current directory structure:**
+   ```bash
+   # Use list_dir tool to explore directories
+   # Use glob_file_search to find files
+   ```
+
+2. **Update project-structure.mdc sections:**
+   - Root directory tree
+   - Directory details with new/updated paths
+   - File type conventions
+   - Quick reference tables
+
+3. **Include in commit:**
+   ```bash
+   git add .cursor/rules/project-structure.mdc
+   ```
+
+### Project Structure Update Examples
+
+**Example 1: Adding New Directory**
+
+```bash
+# 1. Create new directory
+mkdir -p terraform/modules/storage
+
+# 2. Add files
+touch terraform/modules/storage/main.tf
+
+# 3. Update project-structure.mdc:
+# - Add to Root Directory Structure tree
+# - Add to terraform/modules/ section
+# - Update Quick Reference table
+
+# 4. Commit
+git add terraform/modules/storage/ .cursor/rules/project-structure.mdc
+git commit -m "feat(terraform): add storage module
+
+- Add new storage module in terraform/modules/storage
+- Update project-structure.mdc with new directory
+- Add module documentation"
+```
+
+**Example 2: Renaming Directory**
+
+```bash
+# 1. Rename directory
+git mv microservices/identity-service microservices/auth-service
+
+# 2. Update project-structure.mdc:
+# - Update Root Directory Structure tree
+# - Update microservices/ section description
+# - Update all references to identity-service
+# - Update Quick Reference table
+
+# 3. Commit
+git add .cursor/rules/project-structure.mdc
+git commit -m "refactor(microservices): rename identity-service to auth-service
+
+- Rename directory for clarity
+- Update project-structure.mdc with new name
+- Update all documentation references"
+```
+
+**Example 3: Adding New File Type**
+
+```bash
+# 1. Add new file type (e.g., .tfvars files)
+touch terraform/environments/dev/terraform.tfvars
+
+# 2. Update project-structure.mdc:
+# - Add .tfvars to File Type Conventions section
+# - Update Terraform Files standards if needed
+
+# 3. Commit
+git add terraform/environments/dev/terraform.tfvars .cursor/rules/project-structure.mdc
+git commit -m "feat(terraform): add environment-specific variables
+
+- Add terraform.tfvars for dev environment
+- Update project-structure.mdc with .tfvars convention
+- Document variable file usage"
+```
+
+### Project Structure Update Checklist
+
+Before committing structure changes:
+- [ ] Directory tree diagram updated
+- [ ] Directory details section updated
+- [ ] File type conventions updated (if new types)
+- [ ] Quick Reference tables updated
+- [ ] "Where to Find Things" table updated
+- [ ] "Common Tasks" table updated
+- [ ] All examples still accurate
+- [ ] No broken references to old paths
 
 ---
 
@@ -166,6 +319,7 @@ git commit -m "fix: it"
 3. **Update documentation** (if needed)
    - Update README.md
    - Update relevant docs/
+   - **Capture and update project structure** (if directory structure changed)
    - Update application descriptions
    - Add code comments
 
@@ -226,8 +380,9 @@ git push origin main
 
 - [ ] **Code changes complete and tested**
 - [ ] **Documentation updated** (if change affects functionality)
+- [ ] **Project structure (`project-structure.mdc`) updated** (if directory structure changed)
 - [ ] **Commit message follows standards** (type, scope, subject)
-- [ ] **All related files staged** (code + docs)
+- [ ] **All related files staged** (code + docs + project-structure.mdc if updated)
 - [ ] **No sensitive data** in commits (secrets, keys, passwords)
 - [ ] **Linting passes** (if applicable)
 
@@ -257,18 +412,23 @@ metadata:
 **Required Documentation Updates:**
 1. Update `README.md` - Add to components list
 2. Update `docs/cost-optimization-summary.md` - If affects costs
-3. Update `.cursor/rules/project-structure.mdc` - If adds new directory
+3. **Update `.cursor/rules/project-structure.mdc`** - Capture new directory/file structure
 4. Update application description annotation
 
 **Commit:**
 ```bash
+# Capture and update project structure
+# (AI should automatically list directories and update project-structure.mdc)
+
 git add argocd/applications/infrastructure/new-service.yaml
 git add README.md docs/cost-optimization-summary.md
+git add .cursor/rules/project-structure.mdc  # Always include if structure changed
 git commit -m "feat(infrastructure): add new-service application
 
 - Add ArgoCD application for new-service
-- Configure autoscaling and resource limits
+- Configure autoscaling and resources
 - Update README.md with new component
+- Update project-structure.mdc with new application
 - Update cost optimization documentation"
 git push origin main
 ```
@@ -352,13 +512,16 @@ git push origin main
 - `docs/cost-optimization-summary.md`
 - Application resource configurations
 - README.md if affects overall costs
+- `project-structure.mdc` if structure changed
 
 **Commit format:**
 ```bash
+git add .cursor/rules/project-structure.mdc  # If structure changed
 git commit -m "perf(<component>): optimize costs with <technique>
 
 - <specific optimization>
 - Update cost-optimization-summary.md
+- Update project-structure.mdc (if applicable)
 - Expected savings: X%"
 ```
 
@@ -482,6 +645,7 @@ git add . && git commit -m "perf(component): optimize costs
 
 - Specific optimization
 - Update cost-optimization-summary.md
+- Update project-structure.mdc (if structure changed)
 - Expected savings: X%" && git push origin main
 ```
 
@@ -493,6 +657,9 @@ git add README.md
 
 # Update specific docs
 git add docs/cost-optimization-summary.md
+
+# Update project structure (ALWAYS if directories changed)
+git add .cursor/rules/project-structure.mdc
 
 # Update all docs
 git add docs/
@@ -511,9 +678,49 @@ git add .
 This rule applies to **ALL changes** in the repository. When making any code change:
 
 1. **Ask yourself:** "Does this change require documentation updates?"
-2. **If yes:** Update relevant documentation files
-3. **Always:** Commit with descriptive message following standards
-4. **Always:** Push to GitHub to maintain version control
+2. **Ask yourself:** "Did I add, remove, or rename any directories or files?"
+3. **If yes to #1:** Update relevant documentation files
+4. **If yes to #2:** Capture current directory structure and update `project-structure.mdc`
+5. **Always:** Commit with descriptive message following standards
+6. **Always:** Push to GitHub to maintain version control
+
+### For AI Assistants
+
+**When making changes that affect directory structure:**
+
+1. **Before changes:** Note current structure (use `list_dir` and `glob_file_search` tools)
+2. **After changes:** Capture new structure
+3. **Update project-structure.mdc:**
+   - Update Root Directory Structure tree diagram
+   - Update Directory Details sections
+   - Update Quick Reference tables
+   - Update file type conventions if new types added
+4. **Include in commit:** Always stage `project-structure.mdc` if structure changed
+5. **Mention in commit message:** Note project structure update
+
+**Example AI Workflow:**
+```bash
+# 1. List directories to understand current structure
+list_dir(target_directory=".")
+list_dir(target_directory="argocd")
+list_dir(target_directory="terraform")
+
+# 2. Make code changes
+# ... create/modify files ...
+
+# 3. Re-list directories to see changes
+list_dir(target_directory=".")
+
+# 4. Update project-structure.mdc with new structure
+# Update tree diagram, directory details, quick reference
+
+# 5. Stage and commit
+git add . .cursor/rules/project-structure.mdc
+git commit -m "feat: add new component
+
+- Add new component files
+- Update project-structure.mdc with new directory structure"
+```
 
 ### Exception Cases
 
@@ -615,8 +822,9 @@ git push origin main
 
 **For every change:**
 1. ✅ Update documentation if functionality/config changes
-2. ✅ Commit with conventional commit message
-3. ✅ Push to GitHub
+2. ✅ **Update project structure (`project-structure.mdc`) if directory structure changes**
+3. ✅ Commit with conventional commit message
+4. ✅ Push to GitHub
 
 **Remember:**
 - Documentation is part of the code
