@@ -3,6 +3,14 @@ kind: Application
 metadata:
   name: root
   namespace: argocd
+  labels:
+    app.kubernetes.io/name: root
+    app.kubernetes.io/component: bootstrap
+    app.kubernetes.io/part-of: argocd
+    environment: production
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+    description: "Root application using App of Apps pattern to manage all ArgoCD applications"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:

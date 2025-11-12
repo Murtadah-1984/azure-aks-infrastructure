@@ -3,6 +3,14 @@ kind: Application
 metadata:
   name: istio-ingressgateway
   namespace: argocd
+  labels:
+    app.kubernetes.io/name: istio-ingressgateway
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: istio
+    environment: production
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    description: "Istio Ingress Gateway for external traffic"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
@@ -67,6 +75,13 @@ spec:
     automated:
       prune: true
       selfHeal: true
+      allowEmpty: false
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

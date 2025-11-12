@@ -1,0 +1,497 @@
+---
+description: Project directory structure and important files reference guide
+globs:
+alwaysApply: false
+---
+# Project Structure and Directory Guide
+
+Complete reference for the Azure AKS Infrastructure repository structure, directory organization, and important files.
+
+## Repository Overview
+
+This is a production-ready Infrastructure as Code (IaC) repository for deploying and managing Azure Kubernetes Service (AKS) with enterprise-grade components using Terraform, ArgoCD, and Helm following GitOps principles.
+
+## Root Directory Structure
+
+```
+azure-aks-infrastructure/
+├── .cursor/                    # Cursor IDE rules and configuration
+├── .github/                    # GitHub Actions workflows and configuration
+├── argocd/                     # ArgoCD GitOps application definitions
+├── docs/                       # Documentation and runbooks
+├── helm-charts/                # Custom Helm charts (currently empty)
+├── manifests/                  # Kubernetes manifests (Istio, Kong configurations)
+├── microservices/              # Microservice application code
+├── scripts/                    # Automation and deployment scripts
+├── terraform/                  # Terraform infrastructure code
+├── README.md                   # Main project documentation
+└── .yamllint.yml              # YAML linting configuration
+```
+
+---
+
+## Directory Details
+
+### `.cursor/` - Cursor IDE Rules
+
+**Purpose:** Cursor IDE-specific rules and best practices documentation.
+
+**Structure:**
+```
+.cursor/
+└── rules/
+    ├── api-documentation-best-practices.mdc
+    ├── argocd-best-practices.mdc
+    ├── azure-aks-cost-management.mdc
+    ├── cursor-rules.mdc
+    ├── dotnet-webapi-microservice.mdc
+    ├── github-actions-best-practices.mdc
+    ├── helm-best-practices.mdc
+    ├── kubernetes-security-best-practices.mdc
+    ├── project-structure.mdc (this file)
+    └── self-improvement.mdc
+```
+
+**Key Files:**
+- **cursor-rules.mdc:** Guidelines for creating and managing cursor rules
+- **argocd-best-practices.mdc:** ArgoCD Application best practices
+- **dotnet-webapi-microservice.mdc:** .NET WebAPI microservice development standards
+- **github-actions-best-practices.mdc:** CI/CD workflow guidelines
+- **helm-best-practices.mdc:** Helm chart development standards
+- **kubernetes-security-best-practices.mdc:** K8s security hardening guidelines
+
+**Usage:** These rules are automatically applied when working with relevant files. Rules use `.mdc` extension and follow kebab-case naming.
+
+---
+
+### `.github/` - GitHub Actions and Configuration
+
+**Purpose:** CI/CD pipelines, workflows, and GitHub-specific configuration.
+
+**Structure:**
+```
+.github/
+├── workflows/
+│   ├── argocd-sync.yml         # ArgoCD application sync workflow
+│   ├── ci.yml                  # Continuous integration pipeline
+│   ├── helm-lint.yml           # Helm chart validation
+│   ├── README.md               # Workflow documentation
+│   ├── security-scan.yml       # Security scanning workflow
+│   ├── terraform-apply.yml     # Terraform apply workflow
+│   ├── terraform-plan.yml      # Terraform plan workflow
+│   └── terraform-validate.yml  # Terraform validation workflow
+└── dependabot.yml              # Dependabot configuration
+```
+
+**Key Workflows:**
+- **terraform-plan.yml:** Runs Terraform plan on pull requests
+- **terraform-apply.yml:** Applies Terraform changes on merge to main
+- **terraform-validate.yml:** Validates Terraform syntax and formatting
+- **helm-lint.yml:** Lints Helm charts for syntax and best practices
+- **argocd-sync.yml:** Syncs ArgoCD applications after manifest changes
+- **security-scan.yml:** Security vulnerability scanning
+- **ci.yml:** General continuous integration tasks
+
+**Best Practices:** See `.cursor/rules/github-actions-best-practices.mdc`
+
+---
+
+### `argocd/` - ArgoCD GitOps Applications
+
+**Purpose:** ArgoCD Application definitions for GitOps-based Kubernetes deployments.
+
+**Structure:**
+```
+argocd/
+├── bootstrap/
+│   └── root-app.yaml           # Root application (App of Apps pattern)
+└── applications/
+    ├── databases/
+    │   └── postgresql.yaml      # PostgreSQL HA cluster
+    ├── infrastructure/
+    │   ├── cert-manager.yaml    # Certificate management
+    │   ├── istio-base.yaml      # Istio base components (CRDs)
+    │   ├── istio-gateway.yaml   # Istio ingress gateway
+    │   ├── istio-istiod.yaml    # Istio control plane
+    │   └── kong-gateway.yaml    # Kong API Gateway (alternative to Istio)
+    ├── middleware/
+    │   ├── rabbitmq.yaml        # RabbitMQ message broker
+    │   └── redis.yaml           # Redis cache cluster
+    └── observability/
+        ├── loki-stack.yaml      # Loki log aggregation
+        └── prometheus-stack.yaml # Prometheus, Grafana, AlertManager
+```
+
+**Key Files:**
+- **root-app.yaml:** Bootstrap application using App of Apps pattern, recursively discovers all applications in `argocd/applications/`
+- **infrastructure/:** Core infrastructure components (gateways, service mesh, cert-manager)
+- **observability/:** Monitoring and logging stack
+- **middleware/:** Message brokers and caching solutions
+- **databases/:** Database clusters
+
+**Application Organization:**
+- Applications are grouped by logical function (infrastructure, observability, middleware, databases)
+- Each application follows ArgoCD best practices (see `.cursor/rules/argocd-best-practices.mdc`)
+- Applications use sync waves for dependency ordering
+- All applications include finalizers, labels, annotations, and retry policies
+
+**Best Practices:** See `.cursor/rules/argocd-best-practices.mdc`
+
+---
+
+### `docs/` - Documentation
+
+**Purpose:** Project documentation, runbooks, and guides.
+
+**Structure:**
+```
+docs/
+└── runbooks/                   # Operational runbooks (currently empty)
+```
+
+**Usage:**
+- Add operational runbooks for common tasks
+- Document troubleshooting procedures
+- Include architecture decision records (ADRs)
+- Store deployment guides and operational procedures
+
+**Note:** Main project documentation is in `README.md` at the root.
+
+---
+
+### `helm-charts/` - Custom Helm Charts
+
+**Purpose:** Custom Helm charts for application deployments.
+
+**Structure:**
+```
+helm-charts/                      # Currently empty
+```
+
+**Usage:**
+- Store custom Helm charts for microservices
+- Follow Helm best practices (see `.cursor/rules/helm-best-practices.mdc`)
+- Charts should be versioned and follow semantic versioning
+- Use standard Helm chart structure (Chart.yaml, values.yaml, templates/)
+
+---
+
+### `manifests/` - Kubernetes Manifests
+
+**Purpose:** Plain Kubernetes YAML manifests for service mesh and gateway configurations.
+
+**Structure:**
+```
+manifests/
+└── istio/
+    ├── gateways/
+    │   └── main-gateway.yaml   # Istio Gateway configuration
+    ├── policies/
+    │   └── rate-limit.yaml      # Rate limiting policies
+    └── telemetry.yaml           # Telemetry and tracing configuration
+```
+
+**Key Files:**
+- **gateways/main-gateway.yaml:** Istio Gateway resource for external traffic
+- **policies/rate-limit.yaml:** Rate limiting and traffic policies
+- **telemetry.yaml:** Distributed tracing and observability configuration
+
+**Usage:**
+- Store Istio VirtualServices, DestinationRules, and Policies
+- Store Kong Ingress configurations if using Kong
+- These manifests are referenced by ArgoCD Applications
+- Follow Kubernetes and Istio best practices
+
+---
+
+### `microservices/` - Application Code
+
+**Purpose:** Microservice application source code.
+
+**Structure:**
+```
+microservices/
+├── identity-service/           # Identity and authentication service
+├── shared-service/            # Shared services and utilities
+└── tenant-service/            # Tenant management service
+```
+
+**Usage:**
+- Each microservice follows .NET WebAPI standards (see `.cursor/rules/dotnet-webapi-microservice.mdc`)
+- Services should be stateless and Kubernetes-ready
+- Each service should have its own Helm chart or deployment manifests
+- Services are deployed via ArgoCD Applications
+
+**Best Practices:**
+- Follow Clean Architecture and SOLID principles
+- Implement health check endpoints (`/health`, `/health/ready`, `/health/live`)
+- Use distributed tracing and structured logging
+- Never store state in application layer
+- Use external secrets management
+
+---
+
+### `scripts/` - Automation Scripts
+
+**Purpose:** Shell scripts for automation, deployment, and utility tasks.
+
+**Structure:**
+```
+scripts/
+├── choose-gateway.sh          # Helper script for gateway selection
+└── deploy-argocd.sh           # ArgoCD deployment script
+```
+
+**Key Scripts:**
+- **choose-gateway.sh:** Interactive script to choose between Istio and Kong gateway
+- **deploy-argocd.sh:** Script to deploy ArgoCD to the cluster
+
+**Usage:**
+- Scripts should be executable and include error handling
+- Document script purpose and usage in comments
+- Follow shell scripting best practices
+- Use environment variables for configuration
+
+---
+
+### `terraform/` - Infrastructure as Code
+
+**Purpose:** Terraform modules and environment configurations for Azure resources.
+
+**Structure:**
+```
+terraform/
+├── environments/
+│   └── dev/
+│       └── main.tf            # Development environment configuration
+└── modules/
+    └── aks/
+        └── main.tf            # AKS cluster module
+```
+
+**Key Directories:**
+- **environments/:** Environment-specific Terraform configurations
+  - `dev/`: Development environment
+  - Additional environments (staging, production) should follow same structure
+- **modules/:** Reusable Terraform modules
+  - `aks/`: Azure Kubernetes Service cluster module
+
+**Module Structure:**
+- Modules should be reusable and parameterized
+- Use variables for configuration
+- Output important resource information
+- Follow Terraform best practices and naming conventions
+
+**Environment Configuration:**
+- Each environment has its own `main.tf` and `terraform.tfvars`
+- Use remote state backends (Azure Storage)
+- Separate state files per environment
+- Use variable files for environment-specific values
+
+**Best Practices:**
+- Pin provider versions
+- Use remote state backends
+- Implement proper resource tagging
+- Follow Azure naming conventions
+- Use modules for reusability
+
+---
+
+## Important Root Files
+
+### `README.md`
+**Purpose:** Main project documentation and getting started guide.
+
+**Contents:**
+- Project overview and architecture
+- Prerequisites and setup instructions
+- Quick start guide
+- Component descriptions
+- Configuration guide
+- Monitoring and observability
+- Security best practices
+- Troubleshooting guide
+
+### `.yamllint.yml`
+**Purpose:** YAML linting configuration for consistent YAML formatting.
+
+**Usage:**
+- Enforces consistent YAML formatting across the repository
+- Used by CI/CD pipelines for validation
+- Configures line length, indentation, and other formatting rules
+
+---
+
+## File Type Conventions
+
+### YAML Files (`.yaml`, `.yml`)
+- **ArgoCD Applications:** `argocd/applications/**/*.yaml`
+- **Kubernetes Manifests:** `manifests/**/*.yaml`
+- **GitHub Workflows:** `.github/workflows/*.yml`
+- **Configuration:** `.yamllint.yml`
+
+**Standards:**
+- Use 2-space indentation
+- Use kebab-case for file names
+- Follow Kubernetes and ArgoCD best practices
+- Validate with yamllint
+
+### Terraform Files (`.tf`)
+- **Modules:** `terraform/modules/**/*.tf`
+- **Environments:** `terraform/environments/**/*.tf`
+
+**Standards:**
+- Use 2-space indentation
+- Follow Terraform style guide
+- Use consistent variable naming
+- Document all variables and outputs
+
+### Shell Scripts (`.sh`)
+- **Location:** `scripts/*.sh`
+
+**Standards:**
+- Use bash or sh
+- Include shebang (`#!/bin/bash`)
+- Add error handling (`set -euo pipefail`)
+- Document usage in comments
+
+### Markdown Files (`.md`, `.mdc`)
+- **Documentation:** `docs/**/*.md`, `README.md`
+- **Cursor Rules:** `.cursor/rules/*.mdc`
+
+**Standards:**
+- Use proper markdown formatting
+- Include table of contents for long documents
+- Use code blocks with language tags
+- Follow documentation best practices
+
+---
+
+## Directory Naming Conventions
+
+### General Rules
+- Use **kebab-case** for all directory and file names
+- Use descriptive names that indicate purpose
+- Avoid abbreviations unless widely understood
+- Group related files in subdirectories
+
+### Examples
+- ✅ `argocd/applications/infrastructure/`
+- ✅ `terraform/modules/aks/`
+- ✅ `microservices/identity-service/`
+- ❌ `argocd/apps/infra/` (too abbreviated)
+- ❌ `terraform/modules/AKS/` (mixed case)
+
+---
+
+## File Organization Principles
+
+### 1. Separation of Concerns
+- **Infrastructure:** Terraform code in `terraform/`
+- **Deployment:** ArgoCD Applications in `argocd/`
+- **Application Code:** Microservices in `microservices/`
+- **Configuration:** Kubernetes manifests in `manifests/`
+
+### 2. Environment Isolation
+- Separate Terraform configurations per environment
+- Use environment-specific variable files
+- Maintain separate state files
+
+### 3. Reusability
+- Terraform modules for reusable infrastructure
+- Helm charts for application deployments
+- Shared scripts for common tasks
+
+### 4. GitOps Structure
+- All Kubernetes resources managed via ArgoCD
+- Application definitions in `argocd/applications/`
+- Root application uses App of Apps pattern
+- Manifests stored in Git, not applied directly
+
+---
+
+## Adding New Components
+
+### Adding a New ArgoCD Application
+1. Create YAML file in appropriate subdirectory under `argocd/applications/`
+2. Follow ArgoCD best practices (see `.cursor/rules/argocd-best-practices.mdc`)
+3. Include finalizer, labels, annotations, and retry policy
+4. Set appropriate sync wave for dependencies
+5. Root app will automatically discover it
+
+### Adding a New Terraform Module
+1. Create new directory in `terraform/modules/`
+2. Include `main.tf`, `variables.tf`, `outputs.tf`
+3. Document variables and outputs
+4. Follow Terraform module best practices
+
+### Adding a New Microservice
+1. Create directory in `microservices/`
+2. Follow .NET WebAPI microservice standards (see `.cursor/rules/dotnet-webapi-microservice.mdc`)
+3. Create Helm chart or deployment manifests
+4. Add ArgoCD Application definition
+
+### Adding a New Script
+1. Create `.sh` file in `scripts/`
+2. Include shebang and error handling
+3. Document usage in comments
+4. Make executable (`chmod +x`)
+
+---
+
+## Quick Reference
+
+### Where to Find Things
+
+| What | Where |
+|------|-------|
+| ArgoCD Applications | `argocd/applications/` |
+| Terraform Infrastructure | `terraform/` |
+| Kubernetes Manifests | `manifests/` |
+| CI/CD Workflows | `.github/workflows/` |
+| Cursor Rules | `.cursor/rules/` |
+| Documentation | `README.md`, `docs/` |
+| Scripts | `scripts/` |
+| Microservices | `microservices/` |
+| Helm Charts | `helm-charts/` |
+
+### Common Tasks
+
+| Task | Location |
+|------|----------|
+| Add new infrastructure component | `argocd/applications/infrastructure/` |
+| Modify AKS cluster | `terraform/modules/aks/` |
+| Add new environment | `terraform/environments/` |
+| Update Istio config | `manifests/istio/` |
+| Add CI/CD workflow | `.github/workflows/` |
+| Add cursor rule | `.cursor/rules/` |
+
+---
+
+## Best Practices Summary
+
+1. **Follow naming conventions:** kebab-case for files and directories
+2. **Organize by purpose:** Group related files together
+3. **Document everything:** README files, comments, and inline documentation
+4. **Use version control:** All infrastructure and configs in Git
+5. **Follow GitOps:** ArgoCD manages all Kubernetes resources
+6. **Environment isolation:** Separate configs per environment
+7. **Reusability:** Use modules and charts for common patterns
+8. **Security:** Never commit secrets, use external secret management
+9. **Validation:** Use linting and validation in CI/CD
+10. **Consistency:** Follow established patterns and conventions
+
+---
+
+## Related Documentation
+
+- **ArgoCD Best Practices:** `.cursor/rules/argocd-best-practices.mdc`
+- **Helm Best Practices:** `.cursor/rules/helm-best-practices.mdc`
+- **GitHub Actions Best Practices:** `.cursor/rules/github-actions-best-practices.mdc`
+- **Kubernetes Security:** `.cursor/rules/kubernetes-security-best-practices.mdc`
+- **.NET Microservice Standards:** `.cursor/rules/dotnet-webapi-microservice.mdc`
+- **Main Documentation:** `README.md`
+
+---
+
+This structure supports a production-ready, scalable, and maintainable infrastructure platform following industry best practices for GitOps, Infrastructure as Code, and cloud-native application deployment.

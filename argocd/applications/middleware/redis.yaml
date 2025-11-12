@@ -3,6 +3,16 @@ kind: Application
 metadata:
   name: redis-cluster
   namespace: argocd
+  labels:
+    app.kubernetes.io/name: redis-cluster
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: middleware
+    environment: production
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    description: "Redis cluster for caching and session storage"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
   project: middleware
   source:
@@ -45,5 +55,13 @@ spec:
     automated:
       prune: true
       selfHeal: true
+      allowEmpty: false
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

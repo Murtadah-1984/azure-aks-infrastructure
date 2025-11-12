@@ -1,0 +1,812 @@
+---
+description: ArgoCD best practices and guidelines for GitOps deployments in Kubernetes
+globs: argocd/**/*.yaml
+alwaysApply: false
+---
+# ArgoCD Best Practices
+
+Enterprise-grade guidelines for ArgoCD Application definitions, AppProjects, and GitOps workflows following industry best practices for production Kubernetes deployments.
+
+## 1. Application Structure & Metadata
+
+### 1.1 Required Metadata Fields
+
+```yaml
+# ✅ CORRECT - Complete metadata structure
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: <application-name>           # kebab-case, descriptive
+  namespace: argocd                   # Always deploy to argocd namespace
+  labels:
+    app.kubernetes.io/name: <application-name>
+    app.kubernetes.io/component: <component-type>
+    app.kubernetes.io/part-of: <parent-system>
+    environment: <dev|staging|production>
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"  # For dependency ordering
+    description: "Brief description of the application"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io  # Prevent accidental deletion
+```
+
+### 1.2 Naming Conventions
+
+- **Application names:** Use kebab-case, descriptive (e.g., `istio-ingressgateway`, `kong-gateway`)
+- **Namespace:** Always `argocd` for Application resources
+- **Labels:** Follow Kubernetes label standards with `app.kubernetes.io/*` prefix
+- **Annotations:** Use for metadata, sync waves, and documentation
+
+```yaml
+# ❌ WRONG - Missing finalizer, no labels
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp
+  namespace: argocd
+
+# ✅ CORRECT - Complete structure
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-application
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: my-application
+    app.kubernetes.io/component: api
+    environment: production
+  finalizers:
+    - resources-finalizer.argoproj.io
+```
+
+## 2. Project Assignment
+
+### 2.1 Project Structure
+
+Always assign applications to appropriate ArgoCD projects for RBAC and resource isolation:
+
+```yaml
+# ✅ CORRECT - Explicit project assignment
+spec:
+  project: infrastructure  # or observability, middleware, databases, etc.
+```
+
+### 2.2 Project Categories
+
+Organize applications by logical groups:
+- **infrastructure:** Core infrastructure (Istio, Kong, cert-manager)
+- **observability:** Monitoring and logging (Prometheus, Grafana, Loki)
+- **middleware:** Message brokers and caches (RabbitMQ, Redis)
+- **databases:** Database clusters (PostgreSQL, MongoDB)
+- **applications:** Business applications (microservices)
+
+```yaml
+# ✅ CORRECT - Infrastructure component
+spec:
+  project: infrastructure
+
+# ✅ CORRECT - Observability component
+spec:
+  project: observability
+```
+
+## 3. Source Configuration
+
+### 3.1 Helm Chart Sources
+
+```yaml
+# ✅ CORRECT - Helm chart with pinned version
+spec:
+  source:
+    chart: <chart-name>
+    repoURL: <helm-repository-url>
+    targetRevision: 1.20.1  # Always pin to specific version, never use "latest"
+    helm:
+      releaseName: <release-name>  # Should match chart name or be descriptive
+      values: |
+        # Inline values for configuration
+        replicaCount: 3
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+```
+
+**Best Practices:**
+- **Always pin versions:** Never use `latest` or `*` for `targetRevision`
+- **Use semantic versioning:** Prefer specific versions (e.g., `1.20.1`)
+- **Inline values:** Use `values:` for simple configurations
+- **External values:** Use `valueFiles:` for complex configurations stored in Git
+
+```yaml
+# ❌ WRONG - Unpinned version
+spec:
+  source:
+    chart: istio
+    repoURL: https://istio-release.storage.googleapis.com/charts
+    targetRevision: latest  # Never use latest
+
+# ✅ CORRECT - Pinned version
+spec:
+  source:
+    chart: istio
+    repoURL: https://istio-release.storage.googleapis.com/charts
+    targetRevision: 1.20.1  # Specific version
+```
+
+### 3.2 Git Repository Sources (Directory/Plain YAML)
+
+```yaml
+# ✅ CORRECT - Git repository with directory
+spec:
+  source:
+    repoURL: https://github.com/your-org/azure-aks-infrastructure.git
+    targetRevision: main  # or specific branch/tag
+    path: manifests/istio/gateways
+    directory:
+      recurse: false  # Set to true for App of Apps pattern
+```
+
+**Best Practices:**
+- **Use specific branches:** Prefer `main`, `develop`, or tags over `HEAD`
+- **Path specificity:** Use precise paths, avoid overly broad directories
+- **Recurse carefully:** Only use `recurse: true` for App of Apps patterns
+
+### 3.3 App of Apps Pattern
+
+```yaml
+# ✅ CORRECT - Root application using App of Apps
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/azure-aks-infrastructure.git
+    targetRevision: main
+    path: argocd/applications
+    directory:
+      recurse: true  # Recursively discover applications
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: false  # Usually false for root app
+      selfHeal: true
+      allowEmpty: false
+```
+
+## 4. Destination Configuration
+
+### 4.1 Standard Destination
+
+```yaml
+# ✅ CORRECT - Standard destination configuration
+spec:
+  destination:
+    server: https://kubernetes.default.svc  # Same cluster
+    namespace: <target-namespace>  # Target namespace for resources
+```
+
+**Best Practices:**
+- **Same cluster:** Use `https://kubernetes.default.svc` for same-cluster deployments
+- **Namespace specification:** Always specify target namespace explicitly
+- **Multi-cluster:** Use cluster name from ArgoCD cluster secrets for multi-cluster
+
+```yaml
+# ✅ CORRECT - Multi-cluster (if configured)
+spec:
+  destination:
+    server: https://<cluster-name>  # From ArgoCD cluster secret
+    namespace: production
+```
+
+## 5. Sync Policies
+
+### 5.1 Automated Sync Policy
+
+```yaml
+# ✅ CORRECT - Automated sync with safety features
+spec:
+  syncPolicy:
+    automated:
+      prune: true        # Remove resources deleted from Git
+      selfHeal: true     # Automatically sync on drift detection
+      allowEmpty: false  # Prevent sync if no resources found
+    syncOptions:
+      - CreateNamespace=true      # Auto-create namespaces
+      - ServerSideApply=true      # Use server-side apply (recommended)
+      - PrunePropagationPolicy=foreground  # Safe deletion
+      - PruneLast=true            # Prune after sync
+    retry:
+      limit: 3           # Retry failed syncs
+      backoff:
+        duration: 5s     # Initial backoff
+        factor: 2        # Exponential backoff multiplier
+        maxDuration: 3m  # Maximum backoff duration
+```
+
+**Sync Options Explained:**
+- **CreateNamespace=true:** Automatically create target namespace if missing
+- **ServerSideApply=true:** Use Kubernetes server-side apply (recommended for complex resources)
+- **PrunePropagationPolicy=foreground:** Wait for dependent resources before deletion
+- **PruneLast=true:** Prune resources after successful sync
+- **Replace=true:** Replace resources instead of patching (use with caution)
+- **ApplyOutOfSyncOnly=true:** Only apply out-of-sync resources
+
+### 5.2 Manual Sync Policy
+
+```yaml
+# ✅ CORRECT - Manual sync for critical applications
+spec:
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+```
+
+**When to use manual sync:**
+- Critical infrastructure components
+- Applications requiring approval workflows
+- Production environments with change control
+
+### 5.3 Sync Waves for Dependencies
+
+```yaml
+# ✅ CORRECT - Using sync waves for ordering
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"  # Base components (Istio base)
+    
+# Another application
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"  # Depends on wave 0 (Istio istiod)
+    
+# Another application
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"  # Depends on wave 1 (Istio gateway)
+```
+
+**Sync Wave Guidelines:**
+- **Wave 0:** Base infrastructure (CRDs, namespaces, base components)
+- **Wave 1:** Core services (control planes, operators)
+- **Wave 2:** Dependent services (gateways, ingress controllers)
+- **Wave 3+:** Application workloads
+
+## 6. Finalizers
+
+### 6.1 Resource Finalizer
+
+Always include the resource finalizer to prevent accidental deletion:
+
+```yaml
+# ✅ CORRECT - With finalizer
+metadata:
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+```
+
+**Purpose:**
+- Prevents deletion of Application resource while resources exist
+- Ensures proper cleanup of managed resources
+- Protects against accidental `kubectl delete` operations
+
+```yaml
+# ❌ WRONG - Missing finalizer (risky)
+metadata:
+  name: my-app
+  namespace: argocd
+  # No finalizers - can be accidentally deleted
+
+# ✅ CORRECT - With finalizer
+metadata:
+  name: my-app
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+```
+
+## 7. Retry Configuration
+
+### 7.1 Standard Retry Policy
+
+```yaml
+# ✅ CORRECT - Standard retry configuration
+spec:
+  syncPolicy:
+    retry:
+      limit: 3           # Maximum retry attempts
+      backoff:
+        duration: 5s      # Initial wait time
+        factor: 2         # Exponential multiplier
+        maxDuration: 3m  # Maximum wait between retries
+```
+
+**Retry Guidelines:**
+- **limit:** 3-5 for most applications, higher for critical infrastructure
+- **duration:** 5s initial backoff is standard
+- **factor:** 2 for exponential backoff (5s → 10s → 20s → 40s...)
+- **maxDuration:** 3m prevents excessive wait times
+
+```yaml
+# ✅ CORRECT - Aggressive retry for critical infrastructure
+spec:
+  syncPolicy:
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 5m
+```
+
+## 8. Helm Values Management
+
+### 8.1 Inline Values
+
+Use inline values for simple configurations:
+
+```yaml
+# ✅ CORRECT - Inline values for simple config
+spec:
+  source:
+    helm:
+      values: |
+        replicaCount: 3
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 2000m
+            memory: 1024Mi
+        autoscaling:
+          enabled: true
+          minReplicas: 3
+          maxReplicas: 10
+```
+
+### 8.2 External Values Files
+
+Use value files for complex configurations stored in Git:
+
+```yaml
+# ✅ CORRECT - External values file
+spec:
+  source:
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-production.yaml
+```
+
+### 8.3 Values Parameters
+
+Use parameters for environment-specific overrides:
+
+```yaml
+# ✅ CORRECT - Using parameters
+spec:
+  source:
+    helm:
+      parameters:
+        - name: image.tag
+          value: v1.2.3
+        - name: replicaCount
+          value: "5"
+```
+
+## 9. Security Best Practices
+
+### 9.1 Secret Management
+
+```yaml
+# ✅ CORRECT - Using external secrets
+spec:
+  source:
+    helm:
+      values: |
+        env:
+          database_password:
+            valueFrom:
+              secretKeyRef:
+                name: postgres-secret
+                key: password
+```
+
+**Never:**
+- ❌ Hardcode secrets in Application manifests
+- ❌ Commit secrets to Git
+- ❌ Use plain text passwords in values
+
+**Always:**
+- ✅ Use Kubernetes Secrets
+- ✅ Reference secrets via `secretKeyRef`
+- ✅ Use external secret management (Sealed Secrets, External Secrets Operator)
+
+### 9.2 RBAC with AppProjects
+
+```yaml
+# ✅ CORRECT - AppProject with restricted permissions
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: applications
+  namespace: argocd
+spec:
+  description: Application workloads
+  
+  sourceRepos:
+    - https://github.com/your-org/applications.git  # Specific repo
+  
+  destinations:
+    - namespace: 'applications-*'  # Restricted namespaces
+      server: https://kubernetes.default.svc
+  
+  clusterResourceWhitelist: []  # No cluster-wide resources
+  
+  namespaceResourceWhitelist:
+    - group: 'apps'
+      kind: 'Deployment'
+    - group: 'apps'
+      kind: 'Service'
+    # Explicit allow list
+```
+
+## 10. Resource Management
+
+### 10.1 Resource Requests and Limits
+
+Always configure resources in Helm values:
+
+```yaml
+# ✅ CORRECT - Resource configuration in values
+spec:
+  source:
+    helm:
+      values: |
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 2000m
+            memory: 1024Mi
+```
+
+### 10.2 Autoscaling
+
+Enable HPA for production workloads:
+
+```yaml
+# ✅ CORRECT - Autoscaling configuration
+spec:
+  source:
+    helm:
+      values: |
+        autoscaling:
+          enabled: true
+          minReplicas: 3
+          maxReplicas: 10
+          targetCPUUtilizationPercentage: 75
+          targetMemoryUtilizationPercentage: 80
+```
+
+### 10.3 Pod Disruption Budgets
+
+Configure PDBs for high availability:
+
+```yaml
+# ✅ CORRECT - PDB configuration
+spec:
+  source:
+    helm:
+      values: |
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 2
+          # or
+          maxUnavailable: 1
+```
+
+## 11. Monitoring Integration
+
+### 11.1 Prometheus ServiceMonitor
+
+```yaml
+# ✅ CORRECT - Prometheus integration
+spec:
+  source:
+    helm:
+      values: |
+        serviceMonitor:
+          enabled: true
+          interval: 30s
+          labels:
+            release: kube-prometheus-stack
+        podAnnotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "8080"
+          prometheus.io/path: "/metrics"
+```
+
+### 11.2 Health Checks
+
+Ensure applications expose health endpoints:
+
+```yaml
+# ✅ CORRECT - Health check configuration
+spec:
+  source:
+    helm:
+      values: |
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+```
+
+## 12. Complete Application Example
+
+### 12.1 Infrastructure Component
+
+```yaml
+# ✅ CORRECT - Complete infrastructure application
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istio-ingressgateway
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: istio-ingressgateway
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: istio
+    environment: production
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    description: "Istio Ingress Gateway for external traffic"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: infrastructure
+  source:
+    chart: gateway
+    repoURL: https://istio-release.storage.googleapis.com/charts
+    targetRevision: 1.20.1
+    helm:
+      releaseName: istio-ingressgateway
+      values: |
+        replicaCount: 3
+        
+        autoscaling:
+          enabled: true
+          minReplicas: 3
+          maxReplicas: 10
+          targetCPUUtilizationPercentage: 80
+        
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 2000m
+            memory: 1024Mi
+        
+        service:
+          type: LoadBalancer
+          ports:
+            - name: http2
+              port: 80
+              protocol: TCP
+              targetPort: 8080
+            - name: https
+              port: 443
+              protocol: TCP
+              targetPort: 8443
+        
+        podAnnotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "15020"
+          prometheus.io/path: "/stats/prometheus"
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-ingress
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+```
+
+## 13. Common Patterns
+
+### 13.1 Multi-Environment Applications
+
+```yaml
+# ✅ CORRECT - Environment-specific configuration
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app-production
+  namespace: argocd
+  labels:
+    environment: production
+spec:
+  source:
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-production.yaml
+```
+
+### 13.2 Application Dependencies
+
+```yaml
+# ✅ CORRECT - Using sync waves for dependencies
+# Base component (wave 0)
+metadata:
+  name: istio-base
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+
+# Control plane (wave 1, depends on base)
+metadata:
+  name: istio-istiod
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+
+# Gateway (wave 2, depends on istiod)
+metadata:
+  name: istio-ingressgateway
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+```
+
+## 14. Forbidden Patterns
+
+### 14.1 Never Do This
+
+```yaml
+# ❌ WRONG - Unpinned version
+spec:
+  source:
+    targetRevision: latest
+
+# ❌ WRONG - Missing finalizer
+metadata:
+  name: my-app
+  # No finalizers
+
+# ❌ WRONG - Hardcoded secrets
+spec:
+  source:
+    helm:
+      values: |
+        password: "my-secret-password"
+
+# ❌ WRONG - No retry policy
+spec:
+  syncPolicy:
+    automated:
+      prune: true
+    # No retry configuration
+
+# ❌ WRONG - Missing namespace
+spec:
+  destination:
+    server: https://kubernetes.default.svc
+    # No namespace specified
+```
+
+## 15. Troubleshooting
+
+### 15.1 Common Issues
+
+**Application stuck in Syncing:**
+- Check resource quotas
+- Verify RBAC permissions
+- Check for dependency issues (use sync waves)
+
+**Resources not created:**
+- Verify namespace exists or `CreateNamespace=true`
+- Check AppProject permissions
+- Verify source repository access
+
+**Sync failures:**
+- Check Helm chart compatibility
+- Verify values syntax
+- Review retry logs in ArgoCD UI
+
+### 15.2 Health Status
+
+Monitor application health:
+- **Healthy:** All resources synced and healthy
+- **Progressing:** Sync in progress
+- **Degraded:** Some resources unhealthy
+- **Suspended:** Application sync paused
+- **Unknown:** Health status cannot be determined
+
+## 16. CI/CD Integration
+
+### 16.1 GitOps Workflow
+
+1. **Develop:** Make changes to manifests/Helm values
+2. **Commit:** Push to feature branch
+3. **Review:** Create pull request
+4. **Merge:** Merge to main branch
+5. **Sync:** ArgoCD automatically syncs (if automated) or manual sync
+
+### 16.2 GitHub Actions Integration
+
+```yaml
+# ✅ CORRECT - ArgoCD sync workflow
+- name: Sync ArgoCD Application
+  run: |
+    argocd app sync ${{ env.APP_NAME }} \
+      --server ${{ secrets.ARGOCD_SERVER }} \
+      --auth-token ${{ secrets.ARGOCD_TOKEN }}
+```
+
+## 17. Best Practices Summary
+
+### Required for All Applications
+
+- ✅ Pin Helm chart versions (never use `latest`)
+- ✅ Include resource finalizer
+- ✅ Specify target namespace
+- ✅ Configure retry policy
+- ✅ Use appropriate AppProject
+- ✅ Add descriptive labels and annotations
+- ✅ Configure resource requests/limits
+- ✅ Enable health checks
+
+### Recommended for Production
+
+- ✅ Use automated sync with `prune` and `selfHeal`
+- ✅ Configure autoscaling
+- ✅ Set up Pod Disruption Budgets
+- ✅ Integrate with Prometheus
+- ✅ Use sync waves for dependencies
+- ✅ Enable `ServerSideApply=true`
+- ✅ Configure proper RBAC via AppProjects
+
+### Security Requirements
+
+- ✅ Never hardcode secrets
+- ✅ Use Kubernetes Secrets with `secretKeyRef`
+- ✅ Restrict AppProject permissions
+- ✅ Use specific source repositories
+- ✅ Limit cluster resource access
+
+Follow these guidelines to ensure reliable, secure, and maintainable ArgoCD deployments in production Kubernetes environments.
