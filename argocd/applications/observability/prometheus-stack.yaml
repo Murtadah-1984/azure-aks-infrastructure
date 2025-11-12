@@ -24,15 +24,23 @@ spec:
       values: |
         prometheus:
           prometheusSpec:
-            retention: 15d
+            retention: 15d  # Cost-optimized: 15 days (not 30d+)
             storageSpec:
               volumeClaimTemplate:
                 spec:
-                  storageClassName: managed-csi-premium
+                  storageClassName: managed-csi-premium  # Premium for production performance
                   accessModes: ["ReadWriteOnce"]
                   resources:
                     requests:
-                      storage: 100Gi
+                      storage: 100Gi  # Right-sized based on retention
+            # Horizontal Pod Autoscaler for cost optimization
+            replicaCount: 2  # Start with 2 replicas
+            autoscaling:
+              enabled: true
+              minReplicas: 2
+              maxReplicas: 5
+              targetCPUUtilizationPercentage: 70
+              targetMemoryUtilizationPercentage: 80
             resources:
               requests:
                 cpu: 500m
@@ -44,10 +52,16 @@ spec:
         grafana:
           enabled: true
           adminPassword: ${GRAFANA_ADMIN_PASSWORD}
+          # Horizontal Pod Autoscaler for Grafana
+          autoscaling:
+            enabled: true
+            minReplicas: 1
+            maxReplicas: 3
+            targetCPUUtilizationPercentage: 70
           persistence:
             enabled: true
             size: 10Gi
-            storageClassName: managed-csi
+            storageClassName: managed-csi  # Standard storage for Grafana (cost-optimized)
           ingress:
             enabled: true
             ingressClassName: nginx
@@ -63,14 +77,21 @@ spec:
         alertmanager:
           enabled: true
           alertmanagerSpec:
+            # Horizontal Pod Autoscaler for AlertManager
+            replicaCount: 2
+            autoscaling:
+              enabled: true
+              minReplicas: 2
+              maxReplicas: 5
+              targetCPUUtilizationPercentage: 70
             storage:
               volumeClaimTemplate:
                 spec:
-                  storageClassName: managed-csi
+                  storageClassName: managed-csi  # Standard storage (cost-optimized)
                   accessModes: ["ReadWriteOnce"]
                   resources:
                     requests:
-                      storage: 10Gi
+                      storage: 10Gi  # Right-sized for alert history
 
   destination:
     server: https://kubernetes.default.svc

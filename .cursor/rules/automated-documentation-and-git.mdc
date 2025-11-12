@@ -1,0 +1,644 @@
+---
+description: Automated documentation updates, commit, and push workflow for all code changes
+globs: **/*
+alwaysApply: true
+---
+# Automated Documentation and Git Workflow
+
+This rule ensures that all code changes are properly documented, committed, and pushed to GitHub following best practices. **This rule applies to ALL changes in the repository.**
+
+## Core Principle
+
+**Every code change should:**
+1. ✅ Update relevant documentation if the change affects functionality, configuration, or usage
+2. ✅ Be committed with a clear, descriptive commit message
+3. ✅ Be pushed to GitHub to maintain version control and enable collaboration
+
+---
+
+## 1. Documentation Update Requirements
+
+### When to Update Documentation
+
+**Always update documentation when:**
+- ✅ Adding new features or components
+- ✅ Changing configuration options or defaults
+- ✅ Modifying deployment procedures
+- ✅ Updating dependencies or versions
+- ✅ Changing API interfaces or contracts
+- ✅ Adding or removing environment variables
+- ✅ Modifying infrastructure requirements
+- ✅ Changing security configurations
+- ✅ Updating cost optimization settings
+- ✅ Modifying monitoring or observability setup
+
+**Documentation files to consider:**
+- `README.md` - Main project documentation
+- `docs/**/*.md` - Specific documentation files
+- `.cursor/rules/*.mdc` - Cursor rules (if patterns change)
+- `argocd/applications/**/*.yaml` - Application annotations (description field)
+- Inline code comments for complex logic
+
+### Documentation Update Checklist
+
+Before committing, verify:
+- [ ] README.md updated if features/config changed
+- [ ] Relevant docs/ files updated
+- [ ] ArgoCD application descriptions updated (if applicable)
+- [ ] Code comments added for complex changes
+- [ ] Examples updated if API/usage changed
+- [ ] Changelog or version notes updated (if maintained)
+
+---
+
+## 2. Commit Message Standards
+
+### Commit Message Format
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/) specification:
+
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+### Commit Types
+
+- **feat:** New feature
+- **fix:** Bug fix
+- **docs:** Documentation changes
+- **style:** Code style changes (formatting, no logic change)
+- **refactor:** Code refactoring
+- **perf:** Performance improvements
+- **test:** Adding or updating tests
+- **chore:** Maintenance tasks, dependency updates
+- **ci:** CI/CD changes
+- **build:** Build system changes
+- **revert:** Revert previous commit
+
+### Commit Message Examples
+
+**Good Examples:**
+```bash
+# Feature with documentation
+feat(argocd): add HPA to Prometheus stack for cost optimization
+
+- Add horizontal pod autoscaler to Prometheus, Grafana, and AlertManager
+- Optimize storage classes for non-critical components
+- Update cost-optimization-summary.md with new optimizations
+
+Expected savings: 20-30% reduction in observability costs
+
+# Bug fix
+fix(istio): correct gateway service port configuration
+
+Fixes incorrect targetPort mapping that caused connection failures.
+
+# Documentation
+docs: update project structure guide with new microservices
+
+Added documentation for new tenant-service microservice structure.
+
+# Refactoring
+refactor(terraform): extract AKS module for reusability
+
+- Create reusable AKS cluster module
+- Update environment configurations to use new module
+- Maintain backward compatibility
+```
+
+**Bad Examples:**
+```bash
+# Too vague
+git commit -m "updates"
+
+# Missing type
+git commit -m "fixed bug"
+
+# No description
+git commit -m "feat: changes"
+
+# No scope or context
+git commit -m "fix: it"
+```
+
+### Commit Message Guidelines
+
+1. **Subject line:**
+   - Use imperative mood ("add" not "added" or "adds")
+   - First letter lowercase (unless starting with proper noun)
+   - No period at the end
+   - Maximum 72 characters
+   - Be specific and descriptive
+
+2. **Body (optional but recommended for complex changes):**
+   - Explain what and why, not how
+   - Wrap at 72 characters
+   - Use bullet points for multiple changes
+   - Reference issues/PRs if applicable
+
+3. **Footer (optional):**
+   - Breaking changes: `BREAKING CHANGE: <description>`
+   - Issue references: `Closes #123`, `Fixes #456`
+
+---
+
+## 3. Git Workflow Process
+
+### Standard Workflow
+
+**For every change:**
+
+1. **Make code changes**
+   ```bash
+   # Edit files
+   ```
+
+2. **Review changes**
+   ```bash
+   git status
+   git diff
+   ```
+
+3. **Update documentation** (if needed)
+   - Update README.md
+   - Update relevant docs/
+   - Update application descriptions
+   - Add code comments
+
+4. **Stage all changes**
+   ```bash
+   git add .
+   # Or selectively:
+   git add <specific-files>
+   git add docs/  # Documentation updates
+   ```
+
+5. **Commit with descriptive message**
+   ```bash
+   git commit -m "type(scope): subject
+
+   Body explaining the change in detail.
+   - Point 1
+   - Point 2
+   - Point 3
+   "
+   ```
+
+6. **Push to GitHub**
+   ```bash
+   git push origin <branch-name>
+   # For main branch:
+   git push origin main
+   ```
+
+### Branch Strategy
+
+**For feature work:**
+```bash
+# Create feature branch
+git checkout -b feature/your-feature-name
+
+# Make changes, commit, push
+git add .
+git commit -m "feat: your feature description"
+git push origin feature/your-feature-name
+
+# Create PR, merge to main
+```
+
+**For direct main branch work:**
+```bash
+# Make changes, commit, push
+git add .
+git commit -m "feat: your feature description"
+git push origin main
+```
+
+---
+
+## 4. Automated Workflow Checklist
+
+### Before Every Commit
+
+- [ ] **Code changes complete and tested**
+- [ ] **Documentation updated** (if change affects functionality)
+- [ ] **Commit message follows standards** (type, scope, subject)
+- [ ] **All related files staged** (code + docs)
+- [ ] **No sensitive data** in commits (secrets, keys, passwords)
+- [ ] **Linting passes** (if applicable)
+
+### After Every Commit
+
+- [ ] **Changes pushed to GitHub**
+- [ ] **CI/CD pipelines pass** (if applicable)
+- [ ] **Documentation accessible** to team
+
+---
+
+## 5. Documentation Update Patterns
+
+### Pattern 1: Feature Addition
+
+**Code Change:**
+```yaml
+# argocd/applications/infrastructure/new-service.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: new-service
+  annotations:
+    description: "New service description"
+```
+
+**Required Documentation Updates:**
+1. Update `README.md` - Add to components list
+2. Update `docs/cost-optimization-summary.md` - If affects costs
+3. Update `.cursor/rules/project-structure.mdc` - If adds new directory
+4. Update application description annotation
+
+**Commit:**
+```bash
+git add argocd/applications/infrastructure/new-service.yaml
+git add README.md docs/cost-optimization-summary.md
+git commit -m "feat(infrastructure): add new-service application
+
+- Add ArgoCD application for new-service
+- Configure autoscaling and resource limits
+- Update README.md with new component
+- Update cost optimization documentation"
+git push origin main
+```
+
+### Pattern 2: Configuration Change
+
+**Code Change:**
+```yaml
+# argocd/applications/observability/prometheus-stack.yaml
+prometheus:
+  prometheusSpec:
+    retention: 7d  # Changed from 15d
+```
+
+**Required Documentation Updates:**
+1. Update `docs/cost-optimization-summary.md` - Update retention policy
+2. Update application description if behavior changes significantly
+3. Add comment explaining the change
+
+**Commit:**
+```bash
+git add argocd/applications/observability/prometheus-stack.yaml
+git add docs/cost-optimization-summary.md
+git commit -m "perf(observability): reduce Prometheus retention to 7 days
+
+- Reduce retention from 15d to 7d for cost optimization
+- Update cost-optimization-summary.md with new retention policy
+- Expected storage savings: ~50%"
+git push origin main
+```
+
+### Pattern 3: Bug Fix
+
+**Code Change:**
+```yaml
+# Fix incorrect port configuration
+service:
+  port: 8080  # Was 8008
+```
+
+**Required Documentation Updates:**
+1. Update any documentation referencing the old port
+2. Add comment explaining the fix
+
+**Commit:**
+```bash
+git add <fixed-file>
+git commit -m "fix(gateway): correct service port configuration
+
+Fixes incorrect port mapping that caused connection failures.
+Port changed from 8008 to 8080 to match container configuration."
+git push origin main
+```
+
+### Pattern 4: Documentation Only
+
+**Documentation Change:**
+```markdown
+# docs/new-guide.md
+# New deployment guide
+```
+
+**Commit:**
+```bash
+git add docs/new-guide.md
+git commit -m "docs: add new deployment guide
+
+- Add comprehensive deployment guide
+- Include troubleshooting section
+- Add examples for common scenarios"
+git push origin main
+```
+
+---
+
+## 6. Special Cases
+
+### Cost Optimization Changes
+
+**Always update:**
+- `docs/cost-optimization-summary.md`
+- Application resource configurations
+- README.md if affects overall costs
+
+**Commit format:**
+```bash
+git commit -m "perf(<component>): optimize costs with <technique>
+
+- <specific optimization>
+- Update cost-optimization-summary.md
+- Expected savings: X%"
+```
+
+### ArgoCD Application Changes
+
+**Always update:**
+- Application `description` annotation
+- `README.md` if component behavior changes
+- `.cursor/rules/argocd-best-practices.mdc` if pattern changes
+
+**Commit format:**
+```bash
+git commit -m "feat(argocd): <component> - <change>
+
+- <specific change>
+- Update application description
+- <other updates>"
+```
+
+### Infrastructure Changes (Terraform)
+
+**Always update:**
+- `README.md` infrastructure section
+- `docs/` deployment guides
+- Terraform variable documentation
+
+**Commit format:**
+```bash
+git commit -m "feat(terraform): <infrastructure change>
+
+- <specific change>
+- Update deployment documentation
+- <other updates>"
+```
+
+---
+
+## 7. Git Best Practices
+
+### Do's ✅
+
+- ✅ **Commit frequently** - Small, logical commits
+- ✅ **Write clear messages** - Future you will thank you
+- ✅ **Update docs with code** - Don't let documentation drift
+- ✅ **Review before push** - `git log` and `git diff` before pushing
+- ✅ **Use branches** - For larger features or experiments
+- ✅ **Push regularly** - Don't let commits accumulate locally
+
+### Don'ts ❌
+
+- ❌ **Don't commit secrets** - Use external secret management
+- ❌ **Don't force push to main** - Use PRs for main branch
+- ❌ **Don't skip documentation** - Code without docs is technical debt
+- ❌ **Don't use vague messages** - "updates" or "fixes" are not helpful
+- ❌ **Don't commit unrelated changes** - One logical change per commit
+- ❌ **Don't ignore linting errors** - Fix them before committing
+
+---
+
+## 8. Automated Script Template
+
+For complex changes, you can use this workflow:
+
+```bash
+#!/bin/bash
+# Automated commit and push workflow
+
+# 1. Check status
+echo "Checking git status..."
+git status
+
+# 2. Stage all changes
+echo "Staging changes..."
+git add .
+
+# 3. Check if there are changes
+if git diff --staged --quiet; then
+    echo "No changes to commit."
+    exit 0
+fi
+
+# 4. Commit (interactive for message)
+echo "Committing changes..."
+git commit
+
+# 5. Push
+echo "Pushing to GitHub..."
+git push origin $(git branch --show-current)
+
+echo "Done!"
+```
+
+---
+
+## 9. Quick Reference
+
+### Common Commit Patterns
+
+```bash
+# Feature with docs
+git add . && git commit -m "feat(scope): feature description
+
+- Implementation details
+- Documentation updates
+- Expected impact" && git push origin main
+
+# Bug fix
+git add . && git commit -m "fix(scope): bug description
+
+Fixes issue where..."
+git push origin main
+
+# Documentation
+git add docs/ && git commit -m "docs: update <topic>
+
+- Added section on X
+- Updated examples for Y" && git push origin main
+
+# Cost optimization
+git add . && git commit -m "perf(component): optimize costs
+
+- Specific optimization
+- Update cost-optimization-summary.md
+- Expected savings: X%" && git push origin main
+```
+
+### Documentation Update Commands
+
+```bash
+# Update README
+git add README.md
+
+# Update specific docs
+git add docs/cost-optimization-summary.md
+
+# Update all docs
+git add docs/
+
+# Update cursor rules
+git add .cursor/rules/
+
+# Update everything
+git add .
+```
+
+---
+
+## 10. Enforcement
+
+This rule applies to **ALL changes** in the repository. When making any code change:
+
+1. **Ask yourself:** "Does this change require documentation updates?"
+2. **If yes:** Update relevant documentation files
+3. **Always:** Commit with descriptive message following standards
+4. **Always:** Push to GitHub to maintain version control
+
+### Exception Cases
+
+**Documentation updates can be deferred ONLY if:**
+- Change is experimental/temporary (use branch)
+- Documentation update is in separate PR (link in commit message)
+- Change is purely internal/refactoring with no external impact
+
+**Even then, prefer updating docs in the same commit.**
+
+---
+
+## 11. Integration with CI/CD
+
+### GitHub Actions Integration
+
+If using GitHub Actions, ensure workflows:
+- ✅ Validate commit message format
+- ✅ Check for documentation updates
+- ✅ Run linting/validation
+- ✅ Notify on documentation drift
+
+### Pre-commit Hooks (Optional)
+
+Consider adding pre-commit hooks to:
+- Validate commit message format
+- Check for documentation updates
+- Run linting
+- Prevent committing secrets
+
+---
+
+## 12. Examples by Change Type
+
+### Adding New ArgoCD Application
+
+```bash
+# 1. Create application file
+# argocd/applications/infrastructure/new-app.yaml
+
+# 2. Update documentation
+# - README.md: Add to components list
+# - docs/cost-optimization-summary.md: If affects costs
+# - Application description annotation
+
+# 3. Commit and push
+git add argocd/applications/infrastructure/new-app.yaml README.md docs/
+git commit -m "feat(argocd): add new-app application
+
+- Add ArgoCD application for new-app
+- Configure autoscaling and resources
+- Update README.md with new component
+- Add cost optimization notes"
+git push origin main
+```
+
+### Updating Resource Limits
+
+```bash
+# 1. Update application YAML
+# argocd/applications/observability/prometheus-stack.yaml
+# resources: { requests: { cpu: 1000m } }
+
+# 2. Update documentation
+# docs/cost-optimization-summary.md
+
+# 3. Commit and push
+git add argocd/applications/observability/prometheus-stack.yaml docs/cost-optimization-summary.md
+git commit -m "perf(observability): increase Prometheus CPU requests
+
+- Increase CPU requests from 500m to 1000m for stability
+- Update cost-optimization-summary.md with new resource allocation
+- Addresses performance issues under high load"
+git push origin main
+```
+
+### Fixing Configuration Error
+
+```bash
+# 1. Fix the error
+# argocd/applications/infrastructure/kong-gateway.yaml
+# Fix incorrect port configuration
+
+# 2. Update documentation if needed
+# (Usually not needed for bug fixes unless it was documented incorrectly)
+
+# 3. Commit and push
+git add argocd/applications/infrastructure/kong-gateway.yaml
+git commit -m "fix(kong): correct gateway service port
+
+Fixes incorrect port mapping from 8000 to 8080.
+This resolves connection failures to the gateway service."
+git push origin main
+```
+
+---
+
+## Summary
+
+**For every change:**
+1. ✅ Update documentation if functionality/config changes
+2. ✅ Commit with conventional commit message
+3. ✅ Push to GitHub
+
+**Remember:**
+- Documentation is part of the code
+- Good commit messages are documentation
+- Regular pushes enable collaboration
+- Follow the patterns and standards
+
+**This workflow ensures:**
+- ✅ Documentation stays current
+- ✅ Changes are traceable
+- ✅ Team collaboration is enabled
+- ✅ Project maintainability is improved
+
+---
+
+## References
+
+- [Conventional Commits](https://www.conventionalcommits.org/)
+- [Git Best Practices](https://git-scm.com/book)
+- [Documentation Best Practices](.cursor/rules/api-documentation-best-practices.mdc)
+- [Project Structure](.cursor/rules/project-structure.mdc)
+
+---
+
+**This rule applies to ALL changes. Follow it consistently for maintainable, well-documented code.**

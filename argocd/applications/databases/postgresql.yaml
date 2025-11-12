@@ -28,10 +28,13 @@ spec:
           database: appdb
           existingSecret: postgresql-credentials
           
+          # Note: PostgreSQL primary/replica don't use HPA (stateful)
+          # But we can optimize pgpool which is stateless
+          
           persistence:
             enabled: true
-            storageClass: managed-csi-premium
-            size: 100Gi
+            storageClass: managed-csi-premium  # Premium for database performance
+            size: 100Gi  # Right-sized based on data volume
           
           resources:
             requests:
@@ -45,6 +48,13 @@ spec:
           replicaCount: 2
           adminUsername: admin
           existingSecret: pgpool-credentials
+          # Horizontal Pod Autoscaler for PgPool (stateless component)
+          autoscaling:
+            enabled: true
+            minReplicas: 2
+            maxReplicas: 5
+            targetCPUUtilizationPercentage: 70
+            targetMemoryUtilizationPercentage: 80
         
         metrics:
           enabled: true

@@ -24,22 +24,48 @@ spec:
       values: |
         loki:
           enabled: true
+          # Horizontal Pod Autoscaler for Loki
+          autoscaling:
+            enabled: true
+            minReplicas: 2
+            maxReplicas: 5
+            targetCPUUtilizationPercentage: 70
+            targetMemoryUtilizationPercentage: 80
           persistence:
             enabled: true
             size: 100Gi
-            storageClassName: managed-csi-premium
+            # Using Azure Blob Storage for chunks (cost-optimized vs premium disk)
+            # Premium disk only for WAL (write-ahead log) if needed
+            storageClassName: managed-csi  # Standard storage for cost optimization
           config:
             storage_config:
               azure:
                 account_name: ${AZURE_STORAGE_ACCOUNT}
                 account_key: ${AZURE_STORAGE_KEY}
                 container_name: loki-chunks
+            # Cost optimization: Limit retention
+            limits_config:
+              retention_period: 15d  # 15 days retention (cost-optimized)
+            # Compaction for cost savings
+            compactor:
+              retention_enabled: true
+              retention_delete_delay: 2h
+              retention_delete_worker_count: 150
         
         promtail:
           enabled: true
+          # Horizontal Pod Autoscaler for Promtail
+          autoscaling:
+            enabled: true
+            minReplicas: 2
+            maxReplicas: 10
+            targetCPUUtilizationPercentage: 70
           config:
             clients:
               - url: http://loki:3100/loki/api/v1/push
+            # Cost optimization: Batch configuration
+            batchwait: 1s
+            batchsize: 1048576  # 1MB batches for efficiency
         
         grafana:
           enabled: false  # Already deployed in prometheus-stack

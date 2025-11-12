@@ -29,10 +29,18 @@ spec:
           existingPasswordSecret: rabbitmq-credentials
           existingErlangSecret: rabbitmq-erlang-cookie
         
+        # Horizontal Pod Autoscaler for RabbitMQ
+        autoscaling:
+          enabled: true
+          minReplicas: 3
+          maxReplicas: 6  # Limit max for cost control
+          targetCPUUtilizationPercentage: 70
+          targetMemoryUtilizationPercentage: 80
+        
         persistence:
           enabled: true
-          storageClass: managed-csi-premium
-          size: 50Gi
+          storageClass: managed-csi-premium  # Premium for stateful message broker
+          size: 50Gi  # Right-sized based on message volume
         
         resources:
           requests:
