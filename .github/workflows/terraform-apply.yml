@@ -108,7 +108,7 @@ jobs:
       
       - name: Upload Apply Output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: terraform-apply-output-${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'dev') }}
           path: |
