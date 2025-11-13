@@ -215,6 +215,7 @@ app.UseSerilogRequestLogging();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<IdempotencyMiddleware>();
+app.UseMiddleware<Infrastructure.Middleware.PerEndpointRateLimitingMiddleware>();
 app.UseCors("AllowedOrigins");
 app.UseRateLimiter();
 app.UseAuthentication();
