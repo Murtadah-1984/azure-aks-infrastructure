@@ -52,6 +52,7 @@ public static class DependencyInjection
         services.AddScoped<IAuthorizationCodeRepository, AuthorizationCodeRepository>();
         services.AddScoped<IConsentRepository, ConsentRepository>();
         services.AddScoped<Domain.Interfaces.IOutboxRepository, OutboxRepository>();
+        services.AddScoped<Domain.Interfaces.ISigningKeyRepository, SigningKeyRepository>();
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<ApplicationDbContext>());
 
         // Services
@@ -59,6 +60,20 @@ public static class DependencyInjection
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<ITotpService, TotpService>();
+        
+        // Token Providers (Strategy Pattern)
+        services.AddScoped<ITokenProvider, Services.TokenProviders.JwtTokenProvider>();
+        services.AddScoped<Services.TokenProviders.JwtTokenProvider>();
+        services.AddScoped<Services.TokenProviders.ReferenceTokenProvider>();
+        services.AddSingleton<Services.TokenProviders.TokenProviderFactory>();
+        
+        // Grant Type Handlers (Strategy Pattern)
+        services.AddScoped<Application.Features.OAuth2.GrantTypes.IGrantTypeHandler, Application.Features.OAuth2.GrantTypes.AuthorizationCodeGrantHandler>();
+        services.AddScoped<Application.Features.OAuth2.GrantTypes.AuthorizationCodeGrantHandler>();
+        services.AddScoped<Application.Features.OAuth2.GrantTypes.ClientCredentialsGrantHandler>();
+        services.AddScoped<Application.Features.OAuth2.GrantTypes.RefreshTokenGrantHandler>();
+        services.AddSingleton<Application.Features.OAuth2.GrantTypes.GrantTypeHandlerFactory>();
+        
         services.AddHttpContextAccessor();
 
         // JWT Authentication
