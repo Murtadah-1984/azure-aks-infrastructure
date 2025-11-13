@@ -21,6 +21,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<Client> Clients { get; set; }
     public DbSet<AuthorizationCode> AuthorizationCodes { get; set; }
     public DbSet<Consent> Consents { get; set; }
+    public DbSet<WebAuthnCredential> WebAuthnCredentials { get; set; }
 
     private readonly ICurrentUserService _currentUserService;
     private readonly IEventBus _eventBus;

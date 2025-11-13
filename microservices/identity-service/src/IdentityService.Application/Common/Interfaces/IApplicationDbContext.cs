@@ -18,6 +18,7 @@ public interface IApplicationDbContext
     DbSet<Client> Clients { get; }
     DbSet<AuthorizationCode> AuthorizationCodes { get; }
     DbSet<Consent> Consents { get; }
+    DbSet<WebAuthnCredential> WebAuthnCredentials { get; }
     
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -53,6 +53,7 @@ public static class DependencyInjection
         services.AddScoped<IConsentRepository, ConsentRepository>();
         services.AddScoped<Domain.Interfaces.IOutboxRepository, OutboxRepository>();
         services.AddScoped<Domain.Interfaces.ISigningKeyRepository, SigningKeyRepository>();
+        services.AddScoped<Domain.Interfaces.IWebAuthnCredentialRepository, WebAuthnCredentialRepository>();
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<ApplicationDbContext>());
 
         // Services
@@ -60,12 +61,20 @@ public static class DependencyInjection
         services.AddScoped<IPasswordHasher, PasswordHasher>();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<ITotpService, TotpService>();
+        services.AddScoped<Application.Common.Interfaces.IWebAuthnService, WebAuthnService>();
         
         // Token Providers (Strategy Pattern)
         services.AddScoped<ITokenProvider, Services.TokenProviders.JwtTokenProvider>();
         services.AddScoped<Services.TokenProviders.JwtTokenProvider>();
         services.AddScoped<Services.TokenProviders.ReferenceTokenProvider>();
         services.AddSingleton<Services.TokenProviders.TokenProviderFactory>();
+        
+        // MFA Providers (Strategy Pattern)
+        services.AddScoped<Application.Common.Interfaces.IMfaProvider, Services.MfaProviders.TotpMfaProvider>();
+        services.AddScoped<Services.MfaProviders.TotpMfaProvider>();
+        services.AddScoped<Services.MfaProviders.SmsMfaProvider>();
+        services.AddScoped<Services.MfaProviders.EmailMfaProvider>();
+        services.AddSingleton<Services.MfaProviders.MfaProviderFactory>();
         
         // Grant Type Handlers (Strategy Pattern)
         services.AddScoped<Application.Features.OAuth2.GrantTypes.IGrantTypeHandler, Application.Features.OAuth2.GrantTypes.AuthorizationCodeGrantHandler>();
