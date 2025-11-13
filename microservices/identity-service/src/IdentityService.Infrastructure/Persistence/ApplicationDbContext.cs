@@ -2,6 +2,7 @@ using IdentityService.Application.Common.Interfaces;
 using IdentityService.Domain.DomainEvents;
 using IdentityService.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace IdentityService.Infrastructure.Persistence;
 
@@ -23,14 +24,17 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
 
     private readonly ICurrentUserService _currentUserService;
     private readonly IEventBus _eventBus;
+    private readonly IServiceProvider? _serviceProvider;
 
     public ApplicationDbContext(
         DbContextOptions<ApplicationDbContext> options,
         ICurrentUserService currentUserService,
-        IEventBus eventBus) : base(options)
+        IEventBus eventBus,
+        IServiceProvider? serviceProvider = null) : base(options)
     {
         _currentUserService = currentUserService;
         _eventBus = eventBus;
+        _serviceProvider = serviceProvider;
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -70,13 +74,39 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             })
             .ToList();
 
-        var result = await base.SaveChangesAsync(cancellationToken);
-
-        // Publish domain events after successful save
-        foreach (var domainEvent in domainEvents)
+        // Save domain events to outbox instead of direct publishing (Outbox Pattern)
+        if (_serviceProvider != null)
         {
-            await _eventBus.PublishAsync(domainEvent, cancellationToken);
+            var outboxRepository = _serviceProvider.GetService<Domain.Interfaces.IOutboxRepository>();
+            if (outboxRepository != null)
+            {
+                foreach (var domainEvent in domainEvents)
+                {
+                    var outboxMessage = new Domain.Entities.OutboxMessage(
+                        domainEvent.GetType().FullName ?? domainEvent.GetType().Name,
+                        System.Text.Json.JsonSerializer.Serialize(domainEvent));
+                    await outboxRepository.AddAsync(outboxMessage, cancellationToken);
+                }
+            }
+            else
+            {
+                // Fallback to direct publishing if outbox is not configured
+                foreach (var domainEvent in domainEvents)
+                {
+                    await _eventBus.PublishAsync(domainEvent, cancellationToken);
+                }
+            }
         }
+        else
+        {
+            // Fallback to direct publishing if service provider is not available
+            foreach (var domainEvent in domainEvents)
+            {
+                await _eventBus.PublishAsync(domainEvent, cancellationToken);
+            }
+        }
+
+        var result = await base.SaveChangesAsync(cancellationToken);
 
         return result;
     }

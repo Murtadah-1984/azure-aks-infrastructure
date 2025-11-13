@@ -29,7 +29,8 @@ public static class DependencyInjection
             ? $"Host={dbHost};Port={dbPort};Database={dbDatabase};Username={dbUsername};"
             : $"Host={dbHost};Port={dbPort};Database={dbDatabase};Username={dbUsername};Password={dbPassword};";
 
-        services.AddDbContext<ApplicationDbContext>(options =>
+        // Configure DbContext with service provider for outbox repository access
+        services.AddDbContext<ApplicationDbContext>((serviceProvider, options) =>
         {
             options.UseNpgsql(connectionString, npgsqlOptions =>
             {
@@ -39,7 +40,7 @@ public static class DependencyInjection
                     maxRetryDelay: TimeSpan.FromSeconds(30),
                     errorCodesToAdd: null);
             });
-        });
+        }, ServiceLifetime.Scoped);
 
         // Repositories
         services.AddScoped<IUserRepository, UserRepository>();
@@ -50,6 +51,7 @@ public static class DependencyInjection
         services.AddScoped<IClientRepository, ClientRepository>();
         services.AddScoped<IAuthorizationCodeRepository, AuthorizationCodeRepository>();
         services.AddScoped<IConsentRepository, ConsentRepository>();
+        services.AddScoped<Domain.Interfaces.IOutboxRepository, OutboxRepository>();
         services.AddScoped<IApplicationDbContext>(provider => provider.GetRequiredService<ApplicationDbContext>());
 
         // Services
