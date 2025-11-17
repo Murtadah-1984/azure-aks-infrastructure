@@ -46,7 +46,7 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       
       - name: Configure Azure credentials
         uses: azure/login@v2
